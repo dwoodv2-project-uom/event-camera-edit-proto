@@ -12,33 +12,13 @@ all-features = true
 targets = ["x86_64-unknown-linux-gnu", "wasm32-unknown-unknown"]
 
 [dependencies]
-egui = "0.36.0"
-eframe = { version = "0.36.0", features = ["persistence"] }
+iced = "0.14.0"
 log = "0.4.27"
 
 # You only need serde if you want app persistence:
 serde = { version = "1.0.219", features = ["derive"] }
 
-# native:
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-env_logger = "0.11.8"
-
-# web:
-[target.'cfg(target_arch = "wasm32")'.dependencies]
-wasm-bindgen-futures = "0.4.50"
-web-sys = "0.3.70"              # to access the DOM (to hide the loading text)
 
 # Optimize all dependencies even in debug builds:
 [profile.dev.package."*"]
 opt-level = 2
-
-
-[patch.crates-io]
-
-# If you want to use the bleeding edge version of egui and eframe:
-# egui = { git = "https://github.com/emilk/egui", branch = "main" }
-# eframe = { git = "https://github.com/emilk/egui", branch = "main" }
-
-# If you fork https://github.com/emilk/egui you can test with:
-# egui = { path = "../egui/crates/egui" }
-# eframe = { path = "../egui/crates/eframe" }
