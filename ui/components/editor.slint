@@ -1,0 +1,229 @@
+import { Button, VerticalBox, ComboBox, Slider, TextEdit } from "std-widgets.slint";
+import { DebugPopup } from "debug.slint";
+
+export component AppWindow inherits Window {
+    default-font-size: 10pt;
+    preferred-width: 1920px;
+    preferred-height: 1080px;
+
+    in property <image> texture;
+    in property <string> render_backend;
+    in property <string> device;
+    in property <string> device_capabilities;
+
+    debug_menu := DebugPopup {
+        texture: root.texture;
+        render_backend: root.render_backend;
+        device: root.device;
+        device_capabilities: root.device_capabilities;
+    }
+
+    MenuBar {
+        Menu {
+            title: "File";
+
+            MenuItem {
+                title: "Open...";
+            }
+
+            MenuItem {
+                title: "Quit";
+            }
+        }
+
+        Menu {
+            title: "Debug";
+
+            MenuItem {
+                title: "GPU info";
+                activated => {
+                    debug_menu.show()
+                }
+            }
+        }
+    }
+    FlexboxLayout {
+        width: 100%;
+        spacing: 5px;
+        padding: 5px;
+        flex-direction: column;
+
+        property <string> filename: "";
+        property <string> sensor: "";
+        property <int> events: 0;
+        property <string> duration: "0 ns";
+        property <int> acc: 0;
+        property <int> acc_decay: 0;
+        property <int> ts_current: 0;
+        property <string> pause_play_icon: "⏸";
+
+
+
+        FlexboxLayout {
+            height: 70%;
+            width: 100%;
+            spacing: 8px;
+            flex-direction: row;
+            // Preview window with tiling functionality
+            Rectangle {
+                width: 80%;
+                background: red;
+                Text {
+                    text: "TILING PREVIEW WINDOW";
+                }
+            }
+            Rectangle {
+                width: 10%;
+                border-width: 1px;
+                border-color: #777777;
+                VerticalLayout {
+                    alignment: stretch;
+                    padding: 10px;
+                    spacing: 5px;
+                    Text {
+                        font-italic: false;
+                        font-weight: FontWeight.bold;
+                        font-size: 24px;
+                        text: "Source";
+                    }
+                    Text {
+                        text: "File: " + filename;
+                    }
+                    Text {
+                        text: "Sensor: " + sensor;
+                    }
+                    Text {
+                        text: "Total events: " + events;
+                    }
+                    Text {
+                        text: "Duration: " + duration;
+                    }
+                    // divider
+                    Rectangle {
+                        height: 1px;
+                        background: #777777;
+                    }
+                    Text {
+                        font-italic: false;
+                        font-weight: FontWeight.bold;
+                        font-size: 24px;
+                        text: "Open visualisations: ";
+                    }
+                    HorizontalLayout {
+                        Text {
+                            text: "Visualisation: ";
+                        }
+                        ComboBox {
+                            model: ["Time surface", "Voxel", "Depth map", "FRME", "IMU"];
+                            current-value: "Time surface";
+                        }
+                    }
+                    HorizontalLayout {
+                        Text {
+                            text: "Accumulation time: ";
+                        }
+                        Slider {
+                            minimum: 0;
+                            maximum: 100;
+                            value: acc;
+                            changed(value) => {
+                                acc = value;
+                            }
+                        }
+                        TextInput {
+                            input-type: number;
+                            text: acc;
+                        }
+                        Text {
+                            text: " ms";
+                        }
+                    }
+                    HorizontalLayout {
+                        Text {
+                            text: "Decay: ";
+                        }
+                        ComboBox {
+                            model: ["Linear", "Exponential"];
+                            current-value: "Linear";
+                        }
+                    }
+
+                    Rectangle {
+                        height: 1px;
+                        background: #777777;
+                    }
+                    Text {
+                        font-italic: false;
+                        font-weight: FontWeight.bold;
+                        font-size: 24px;
+                        text: "Playback";
+                    }
+                    Text {
+                        text: "Timestamp: " + ts_current;
+                    }
+                    Text {
+                        text: "Events: " + events;
+                    }
+                    Text {
+                        text: "Polarity: ";
+                    }
+                    Rectangle {
+                        height: 35%;
+                        background: #777777;
+                        Text {
+                            text: "POLARITY HISTOGRAM";
+                        }
+                    }
+                }
+            }
+        }
+        FlexboxLayout {
+            alignment: start;
+            spacing: 20px;
+            height: 2%;
+            // TODO: use proper icons rather than ASCII, these are just placeholder
+            Button {
+                text: "⏮";
+            }
+            Button {
+                text: "<";
+            }
+            Button {
+                text: pause_play_icon;
+                clicked => {
+                    pause_play_icon = pause_play_icon == "⏸" ? "▶︎" : "⏸"
+                }
+            }
+            Button {
+                text: ">";
+            }
+            Button {
+                text: "⏭";
+            }
+            HorizontalLayout {
+                TextInput {
+                    input-type: decimal;
+                    text: 1;
+                }
+                Text {
+                    text: "x";
+                }
+            }
+            HorizontalLayout {
+                Text {
+                    text: "ts: ";
+                }
+                TextInput {
+                    input-type: decimal;
+                    text: 1;
+                }
+            }
+        }
+        Rectangle {
+            background: orange; width: 100%; height: 28%;
+            Text {
+                text: "TIMELINE";
+            }
+        }
+    }
+}
