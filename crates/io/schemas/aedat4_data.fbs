@@ -1,0 +1,25 @@
+// Schema for a AEDAT 4 packet, it contains a 8 byte `PacketHeader` and a variable length `Packet`
+// This must be added to VCS as it is part of the build process
+// Specification is described [here](https://docs.inivation.com/software/software-advanced-usage/file-formats/aedat-4.0.html)
+
+file_identifier "FTAB"; // magic bytes for the AEDAT4 header
+
+struct PacketHeader {
+    id: int32;
+    size: int32;
+}
+
+table Packet {
+    header: PacketHeader;
+}
+
+// figure out all the fields
+
+//struct Event {
+    //timestamp: int64;
+    //x: int16;
+    //y: int16;
+    //polarity: bool;
+//}
+
+root_type Packet;

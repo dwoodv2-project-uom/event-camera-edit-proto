@@ -1,77 +1,67 @@
-#![warn(clippy::all, rust_2018_idioms)]
-#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // hide console window on Windows in release
+// Prevent console window in addition to Slint window in Windows release builds when, e.g., starting the app via file manager. Ignored on other platforms.
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-#[cfg(not(target_arch = "wasm32"))]
-fn main() -> eframe::Result {
-    env_logger::init(); // Log to stderr (if you run with `RUST_LOG=debug`).
+use slint::{
+    ToSharedString,
+    wgpu_30::{WGPUConfiguration, WGPUSettings, wgpu},
+};
+pub mod renderer;
+use renderer::Renderer;
 
-    let native_options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_inner_size([400.0, 300.0])
-            .with_min_inner_size([300.0, 220.0])
-            .with_icon(
-                // NOTE: Adding an icon is optional
-                eframe::icon_data::from_png_bytes(
-                    &include_bytes!("assets/favicon-512x512.png")[..],
-                )
-                .expect("Failed to load icon"),
-            ),
-        ..Default::default()
-    };
-    eframe::run_native(
-        "eframe template",
-        native_options,
-        Box::new(|cc| Ok(Box::new(event_camera_edit_proto::TemplateApp::new(cc)))),
-    )
-}
+slint::include_modules!();
 
-// When compiling to web using trunk:
-#[cfg(target_arch = "wasm32")]
-fn main() {
-    use eframe::wasm_bindgen::JsCast as _;
+pub fn main() {
+    // Bootstrap wgpu for GPU accelarated 2D/3D rendering
 
-    // Redirect `log` message to `console.log` and friends:
-    eframe::WebLogger::init(log::LevelFilter::Debug).ok();
+    let mut wgpu_settings = WGPUSettings::default();
+    wgpu_settings.device_required_features = wgpu::Features::IMMEDIATES;
+    wgpu_settings.device_required_limits.max_immediate_size = 16;
 
-    let web_options = eframe::WebOptions::default();
+    slint::BackendSelector::new()
+        .require_wgpu_30(WGPUConfiguration::Automatic(wgpu_settings))
+        .select()
+        .expect("Unable to create backend with WGPU based renderer");
 
-    wasm_bindgen_futures::spawn_local(async {
-        let document = web_sys::window()
-            .expect("No window")
-            .document()
-            .expect("No document");
+    let editor_window = AppWindow::new().expect("failed to create app window");
+    let editor_weak = editor_window.as_weak();
+    let mut renderer = None;
 
-        let canvas = document
-            .get_element_by_id("the_canvas_id")
-            .expect("Failed to find the_canvas_id")
-            .dyn_into::<web_sys::HtmlCanvasElement>()
-            .expect("the_canvas_id was not a HtmlCanvasElement");
-
-        let start_result = eframe::WebRunner::new()
-            .start(
-                canvas,
-                web_options,
-                Box::new(|cc| {
-                    Ok(Box::new(event_camera_edit_proto_desktop::TemplateApp::new(
-                        cc,
-                    )))
-                }),
-            )
-            .await;
-
-        // Remove the loading text and spinner:
-        if let Some(loading_text) = document.get_element_by_id("loading_text") {
-            match start_result {
-                Ok(()) => {
-                    loading_text.remove();
-                }
-                Err(err) => {
-                    loading_text.set_inner_html(
-                        "<p> The app has crashed. See the developer console for details. </p>",
-                    );
-                    panic!("Failed to start eframe: {err:?}");
+    editor_window
+        .window()
+        // Setup rendering pipeline for test shader
+        .set_rendering_notifier(move |state, graphics_api| match state {
+            slint::RenderingState::RenderingSetup => {
+                if let slint::GraphicsAPI::WGPU30 { device, queue, .. } = graphics_api {
+                    renderer = Some(Renderer::new(&device, &queue));
+                    // Set UI elements in debug menu
+                    if let Some(editor_window) = editor_weak.upgrade() {
+                        editor_window.set_render_backend("renderer-femtovg-wgpu".into());
+                        editor_window.set_device(device.adapter_info().name.into());
+                        editor_window.set_device_capabilities(device.features().to_shared_string());
+                    }
                 }
             }
-        }
-    });
+            slint::RenderingState::BeforeRendering => {
+                if let Some(renderer) = &mut renderer {
+                    let texture = renderer.render();
+                    if let Ok(image) = slint::Image::try_from(texture) {
+                        if let Some(editor_window) = editor_weak.upgrade() {
+                            editor_window.set_texture(image);
+                        }
+                    }
+                }
+            }
+            slint::RenderingState::AfterRendering => {}
+            slint::RenderingState::RenderingTeardown => {
+                drop(renderer.take());
+            }
+            _ => {
+                println!("unknown rendering state");
+            }
+        })
+        .expect("Failed to setup wgpu renderer");
+
+    editor_window.window().request_redraw();
+
+    editor_window.run().expect("window failed to init");
 }

@@ -1,0 +1,53 @@
+import { Palette } from "std-widgets.slint";
+
+export component DebugPopup inherits PopupWindow {
+    in property <image> texture;
+    in property <string> render_backend;
+    in property <string> device;
+    in property <string> device_capabilities;
+
+    preferred-width: 300px;
+    preferred-height: 480px;
+
+    Rectangle {
+        background: Palette.background;
+        padding: 30px;
+        border-width: 1px;
+        border-color: Palette.border;
+        border-radius: 6px;
+
+        FlexboxLayout {
+            flex-direction: column;
+            spacing: 8px;
+            padding: 8px;
+
+            Text {
+                font-italic: false;
+                font-weight: FontWeight.bold;
+                font-size: 24px;
+                text: "GPU info";
+            }
+            Text {
+                text: "Render backend: " + render_backend ;
+            }
+
+            Text {
+                text: "Device: " + device ;
+            }
+
+            Text {
+                text: "Device capabilities: " + device_capabilities ;
+            }
+
+            Text {
+                text: "This was rendered using the GPU!" ;
+            }
+
+            Image {
+                source: root.texture;
+                max-width: 300px;
+                max-height: 300px;
+            }
+        }
+    }
+}

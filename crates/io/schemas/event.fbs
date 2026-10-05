@@ -1,0 +1,14 @@
+file_identifier "EVTS";
+
+struct Event {
+    ts: int64;
+    x: int16;
+    y: int16;
+    polarity: bool;
+}
+
+table EventPacket {
+    elements: [Event] (native_inline);
+}
+
+root_type EventPacket;

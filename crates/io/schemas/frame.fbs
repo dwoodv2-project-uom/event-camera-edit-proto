@@ -1,0 +1,40 @@
+file_identifier "FRME";
+
+// more formats to support defined here: https://gitlab.com/inivation/dv/dv-processing/-/blob/master/include/dv-processing/data/frame.fbs?ref_type=heads
+// TODO: probably should look into some matrixes used for depth estimation etc.
+enum FrameFormat : int8 {
+    Greyscale  = 0, // 8U_C1
+    Bgr = 16, // 8U_C3
+    Bgr16 = 18, // 16U_C3
+    Brga  = 24, // 8U_C4
+    Brga16 = 26 // 16U_C4
+}
+
+table Frame {
+    /// Timestamp of the middle of the frame (µs)
+    ts: int64;
+    /// SOF (Start Of Frame) timestamp (µs)
+    start_ts: int64;
+    /// EOF (End Of Frame) timestamp (µs)
+    end_ts: int64;
+    /// SOE (Start Of Exposure) timestamp (µs)
+    exposure_start_ts: int64;
+    /// EOE (End Of Exposure) timestamp (µs)
+    exposure_end_ts: int64;
+    /// Format of pixels (e.g. RGBA)
+    format: FrameFormat = Greyscale;
+    /// Width of the frame (x axis length in pixels)
+    width: int16;
+    /// Height of the frame (y axis length in pixels)
+    height: int16;
+    /// (upper left) offset of the frame in the x direction
+    offset_x: int16;
+    /// (upper left) offset of the frame in the y direction
+    offset_y: int16;
+    /// 8-bit pixel array
+    pixels: [uint8];
+    /// Exposure time (µs)
+    exposure: int64;
+}
+
+root_type Frame;

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = [
+members = ["crates/io",
     "ui",
     #"crates/core",
 ]
@@ -10,17 +10,6 @@ opt-level = 2
 
 [profile.release]
 opt-level = 2
-
-[patch.crates-io]
-
-# If you want to use the bleeding edge version of egui and eframe:
-# egui = { git = "https://github.com/emilk/egui", branch = "main" }
-# eframe = { git = "https://github.com/emilk/egui", branch = "main" }
-
-# If you fork https://github.com/emilk/egui you can test with:
-# egui = { path = "../egui/crates/egui" }
-# eframe = { path = "../egui/crates/eframe" }
-
 
 # ----------------------------------------------------------------------------------------
 # Universal lints:
@@ -40,6 +29,7 @@ unsafe_op_in_unsafe_fn = "warn" # `unsafe_op_in_unsafe_fn` may become the defaul
 unused_extern_crates = "warn"
 unused_import_braces = "warn"
 unused_lifetimes = "warn"
+unwrap_used = "warn"
 
 trivial_casts = "allow"
 unused_qualifications = "allow"

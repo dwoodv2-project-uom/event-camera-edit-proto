@@ -1,0 +1,37 @@
+file_identifier "TRIG";
+
+enum TriggerType: int8 {
+    /// Timestamp reset occured
+    TimestampReset = 0,
+    /// Rising edge from external input device detected
+    ExternalSignalRisingEdge = 1,
+    /// Falling edge from external input module detected
+    ExternalSignalFallingEdge = 2,
+    /// Pulse from external input module detected
+    ExternalSignalPulse = 3,
+    /// Rising edge from external generator detected
+    ExternalGeneratorRisingEdge = 4,
+    /// Falling edge from external generator detected
+    ExternalGeneratorFallingEdge = 5,
+    /// APS frame capture has started
+    ApsFrameStart = 6,
+    /// APS frame capture has ended
+    ApsFrameEnd = 7,
+    /// APS exposure has started
+    ApsExposureStart = 8,
+    /// APS exposure has ended
+    ApsExposureEnd = 9,
+}
+
+table Trigger {
+    /// Timestamp of the middle of the frame (µs)
+    ts: int64;
+    /// Type of trigger occurred
+    type: TriggerType;
+}
+
+table TriggerPacket {
+    elements: [Trigger];
+}
+
+root_type TriggerPacket;

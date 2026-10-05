@@ -1,0 +1,22 @@
+// Schema for the AEDAT4 `IOHeader`
+// This must be added to VCS as it is part of the build process
+// To generate the schema, run `flatc --rust aedat4_header.fbs`
+// Specification is described [here](https://docs.inivation.com/software/software-advanced-usage/file-formats/aedat-4.0.html)
+
+file_identifier "IOHE"; // magic bytes for the AEDAT4 header
+
+enum CompressionType : int32 {
+	NONE,
+	LZ4,
+	LZ4_HIGH,
+	ZSTD,
+	ZSTD_HIGH
+}
+
+table IOHeader {
+	compression: CompressionType = NONE; // compression type of the data table
+	data_table_offset: int64 = -1; // offset in bytes where the data table starts
+	info: string; //  info mode in xml format
+}
+
+root_type IOHeader;
