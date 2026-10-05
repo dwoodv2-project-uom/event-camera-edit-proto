@@ -1,0 +1,22 @@
+<html>
+    <head>
+         <title>Neuromorphic video editor</title>
+    <link rel="modulepreload" href="https://dwoodv2-project-uom.github.io/event-camera-edit-proto/event_camera_editor_ui.js" crossorigin="anonymous" integrity="sha384-DnKYhlk8UofLTZorvag5BI/Y7KbcEsV1TCAd8oUXQNu8HRQ/YHrIsa5wZ+Pw9IbL"><link rel="preload" href="https://dwoodv2-project-uom.github.io/event-camera-edit-proto/event_camera_editor_ui_bg.wasm" crossorigin="anonymous" integrity="sha384-jCPR5MqqQoj3Hf+/lVXyOEb50CCx6Ujl9Oqa0dpl/cwBbnw5CWipWKAFbR1s+PfE" as="fetch" type="application/wasm"></head>
+    <body>
+        <!-- canvas required by the Slint runtime -->
+        <canvas id="canvas"></canvas>
+
+        
+<script type="module">
+import init, * as bindings from 'https://dwoodv2-project-uom.github.io/event-camera-edit-proto/event_camera_editor_ui.js';
+const wasm = await init({ module_or_path: 'https://dwoodv2-project-uom.github.io/event-camera-edit-proto/event_camera_editor_ui_bg.wasm' });
+
+
+window.wasmBindings = bindings;
+
+
+dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
+
+</script>
+    </body>
+</html>
