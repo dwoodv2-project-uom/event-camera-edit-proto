@@ -4,11 +4,10 @@
 
 
 build-desktop: ## Build the desktop application
-	cargo build --package event_camera_edit_proto
+	cargo build --package event_camera_editor_ui
 
 run-desktop: ## Run the desktop application
-	cargo run --package event_camera_edit_proto
-
+	cargo run --package event_camera_editor_ui
 
 setup-trunk: ## Installs trunk on the host machine
 	rustup target add wasm32-unknown-unknown

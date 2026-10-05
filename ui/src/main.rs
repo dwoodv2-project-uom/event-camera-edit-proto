@@ -5,13 +5,12 @@ use slint::{
     ToSharedString,
     wgpu_30::{WGPUConfiguration, WGPUSettings, wgpu},
 };
-use std::{error::Error};
 pub mod renderer;
 use renderer::Renderer;
 
 slint::include_modules!();
 
-fn main() -> Result<(), Box<dyn Error>> {
+pub fn main() {
     // Bootstrap wgpu for GPU accelarated 2D/3D rendering
 
     let mut wgpu_settings = WGPUSettings::default();
@@ -65,6 +64,4 @@ fn main() -> Result<(), Box<dyn Error>> {
     editor_window.window().request_redraw();
 
     editor_window.run().expect("window failed to init");
-
-    Ok(())
 }
