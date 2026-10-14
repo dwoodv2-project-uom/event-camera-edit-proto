@@ -1,12 +1,20 @@
 // Prevent console window in addition to Slint window in Windows release builds when, e.g., starting the app via file manager. Ignored on other platforms.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use std::sync::{Arc, Mutex};
+
 use slint::{
     ToSharedString,
     wgpu_30::{WGPUConfiguration, WGPUSettings, wgpu},
 };
 pub mod renderer;
 use renderer::Renderer;
+
+pub mod visualisations;
+use visualisations::timeline;
+
+pub mod state;
+use state::AppState;
 
 slint::include_modules!();
 
@@ -23,6 +31,8 @@ pub fn main() {
         .expect("Unable to create backend with WGPU based renderer");
 
     let editor_window = AppWindow::new().expect("failed to create app window");
+    wire(&editor_window);
+
     let editor_weak = editor_window.as_weak();
     let mut renderer = None;
 
@@ -64,4 +74,21 @@ pub fn main() {
     editor_window.window().request_redraw();
 
     editor_window.run().expect("window failed to init");
+}
+
+/// Wires all callbacks for the UI.
+fn wire(ui: &AppWindow) {
+    // Timeline rendering
+    // TODO: optimise this so on_render_timeline is only called when the timeline data changes (e.g. scale)
+    {
+        ui.on_render_timeline(|width, height| {
+            if width < 100.0 || height < 100.0 {
+                return slint::Image::default();
+            }
+
+            timeline::render(width as u32, height as u32)
+        });
+    }
+    // Every callback should have it's own scope
+    {}
 }

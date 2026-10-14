@@ -1,5 +1,12 @@
-import { Button, VerticalBox, ComboBox, Slider, TextEdit } from "std-widgets.slint";
+import {
+    Button,
+    VerticalBox,
+    ComboBox,
+    Slider,
+    TextEdit,
+} from "std-widgets.slint";
 import { DebugPopup } from "debug.slint";
+import { Timeline } from "timeline.slint";
 
 export component AppWindow inherits Window {
     default-font-size: 10pt;
@@ -10,6 +17,8 @@ export component AppWindow inherits Window {
     in property <string> render_backend;
     in property <string> device;
     in property <string> device_capabilities;
+
+    pure callback render_timeline(float, float) -> image;
 
     debug_menu := DebugPopup {
         texture: root.texture;
@@ -42,6 +51,7 @@ export component AppWindow inherits Window {
             }
         }
     }
+
     FlexboxLayout {
         width: 100%;
         spacing: 5px;
@@ -57,8 +67,6 @@ export component AppWindow inherits Window {
         property <int> ts_current: 0;
         property <string> pause_play_icon: "⏸";
 
-
-
         FlexboxLayout {
             height: 70%;
             width: 100%;
@@ -72,6 +80,7 @@ export component AppWindow inherits Window {
                     text: "TILING PREVIEW WINDOW";
                 }
             }
+
             Rectangle {
                 width: 10%;
                 border-width: 1px;
@@ -86,15 +95,19 @@ export component AppWindow inherits Window {
                         font-size: 24px;
                         text: "Source";
                     }
+
                     Text {
                         text: "File: " + filename;
                     }
+
                     Text {
                         text: "Sensor: " + sensor;
                     }
+
                     Text {
                         text: "Total events: " + events;
                     }
+
                     Text {
                         text: "Duration: " + duration;
                     }
@@ -103,25 +116,30 @@ export component AppWindow inherits Window {
                         height: 1px;
                         background: #777777;
                     }
+
                     Text {
                         font-italic: false;
                         font-weight: FontWeight.bold;
                         font-size: 24px;
                         text: "Open visualisations: ";
                     }
+
                     HorizontalLayout {
                         Text {
                             text: "Visualisation: ";
                         }
+
                         ComboBox {
                             model: ["Time surface", "Voxel", "Depth map", "FRME", "IMU"];
                             current-value: "Time surface";
                         }
                     }
+
                     HorizontalLayout {
                         Text {
                             text: "Accumulation time: ";
                         }
+
                         Slider {
                             minimum: 0;
                             maximum: 100;
@@ -130,18 +148,22 @@ export component AppWindow inherits Window {
                                 acc = value;
                             }
                         }
+
                         TextInput {
                             input-type: number;
                             text: acc;
                         }
+
                         Text {
                             text: " ms";
                         }
                     }
+
                     HorizontalLayout {
                         Text {
                             text: "Decay: ";
                         }
+
                         ComboBox {
                             model: ["Linear", "Exponential"];
                             current-value: "Linear";
@@ -152,21 +174,26 @@ export component AppWindow inherits Window {
                         height: 1px;
                         background: #777777;
                     }
+
                     Text {
                         font-italic: false;
                         font-weight: FontWeight.bold;
                         font-size: 24px;
                         text: "Playback";
                     }
+
                     Text {
                         text: "Timestamp: " + ts_current;
                     }
+
                     Text {
                         text: "Events: " + events;
                     }
+
                     Text {
                         text: "Polarity: ";
                     }
+
                     Rectangle {
                         height: 35%;
                         background: #777777;
@@ -177,6 +204,7 @@ export component AppWindow inherits Window {
                 }
             }
         }
+
         FlexboxLayout {
             alignment: start;
             spacing: 20px;
@@ -185,44 +213,55 @@ export component AppWindow inherits Window {
             Button {
                 text: "⏮";
             }
+
             Button {
                 text: "<";
             }
+
             Button {
                 text: pause_play_icon;
                 clicked => {
                     pause_play_icon = pause_play_icon == "⏸" ? "▶︎" : "⏸"
                 }
             }
+
             Button {
                 text: ">";
             }
+
             Button {
                 text: "⏭";
             }
+
             HorizontalLayout {
                 TextInput {
                     input-type: decimal;
                     text: 1;
                 }
+
                 Text {
                     text: "x";
                 }
             }
+
             HorizontalLayout {
                 Text {
                     text: "ts: ";
                 }
+
                 TextInput {
                     input-type: decimal;
                     text: 1;
                 }
             }
         }
-        Rectangle {
-            background: orange; width: 100%; height: 28%;
-            Text {
-                text: "TIMELINE";
+
+        Timeline {
+            width: 100%;
+            height: 28%;
+
+            on_render_timeline(width, height) => {
+                return root.render_timeline(width, height);
             }
         }
     }
