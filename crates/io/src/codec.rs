@@ -6,10 +6,7 @@ use tokio::io::AsyncRead;
 use crate::{
     aedat4_header_generated::CompressionType,
     error::{DecodeError, FileReadError},
-    event,
     file::FileFormat,
-    frame::{self, Frame},
-    imu, trigger,
 };
 
 /// (asyncronous) source of bytes, e.g. a file, network stream etc.
@@ -53,11 +50,11 @@ impl FromStr for CompressionType {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_ascii_lowercase().as_str() {
-            "none" => Ok(CompressionType::NONE),
-            "lz4" => Ok(CompressionType::LZ4),
-            "lz4_high" => Ok(CompressionType::LZ4_HIGH),
-            "zstd" => Ok(CompressionType::ZSTD),
-            "zstd_high" => Ok(CompressionType::ZSTD_HIGH),
+            "none" => Ok(Self::NONE),
+            "lz4" => Ok(Self::LZ4),
+            "lz4_high" => Ok(Self::LZ4_HIGH),
+            "zstd" => Ok(Self::ZSTD),
+            "zstd_high" => Ok(Self::ZSTD_HIGH),
             _ => Err(()),
         }
     }
@@ -77,7 +74,7 @@ pub struct OutputInfo {
     pub size_x: Option<u32>,
     /// The height of the output in pixels (if applicable)
     pub size_y: Option<u32>,
-    /// The source of the output, e.g. a specific camera name: DAVIS346_00000002
+    /// The source of the output, e.g. a specific camera name: `DAVIS346_00000002`
     pub source: Option<String>,
     /// The timestamp offset of the output
     pub ts_offset: Option<i64>,

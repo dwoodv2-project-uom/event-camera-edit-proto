@@ -32,12 +32,12 @@ fn main() {
             .output()
             .unwrap();
 
-        println!("flatc -o ./generated --rust {}", path);
+        println!("flatc -o ./generated --rust {path}");
 
         let stderr = String::from_utf8_lossy(&output.stderr);
 
         if !output.status.success() {
-            eprintln!("flatc failed to compile schema: {}", stderr);
+            eprintln!("flatc failed to compile schema: {stderr}");
         }
     }
 }

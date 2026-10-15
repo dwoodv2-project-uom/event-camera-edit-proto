@@ -1,10 +1,10 @@
-use std::io::{ErrorKind, Read, SeekFrom};
+use std::io::{ErrorKind, Read as _, SeekFrom};
 
 use async_trait::async_trait;
 ///
 /// Decoder for the AEDAT4 file format decribed [here](https://docs.inivation.com/software/software-advanced-usage/file-formats/aedat-4.0.html).
 ///
-use tokio::io::{self, AsyncReadExt, AsyncSeekExt, BufReader};
+use tokio::io::{self, AsyncReadExt as _, AsyncSeekExt as _, BufReader};
 
 use xml::{
     attribute::OwnedAttribute,
@@ -12,15 +12,14 @@ use xml::{
 };
 
 use crate::file_data_table::{
-    FileDataTable as FlatbuffersFileDataTable, root_as_file_data_table,
-    root_as_file_data_table_unchecked, size_prefixed_root_as_file_data_table,
+    FileDataTable as FlatbuffersFileDataTable, size_prefixed_root_as_file_data_table,
     size_prefixed_root_as_file_data_table_unchecked,
 };
 use crate::{
     aedat4_data_generated,
     aedat4_header_generated::{self, CompressionType},
     codec::{
-        ByteSource, Codec, Decoder, DecoderFactory, ModuleInfo, OutputInfo, Packet, PacketContent,
+        Codec, Decoder, DecoderFactory, ModuleInfo, Packet, PacketContent,
         VideoMetadata,
     },
     error::{DecodeError, FileReadError},
@@ -28,20 +27,19 @@ use crate::{
 };
 use lz4;
 use std::io::Cursor;
-use std::pin::Pin;
 use std::sync::Arc;
 use tokio::fs::File;
 
 /// Struct representing the state of AEDAT4 codec.
 pub struct Aedat4;
 
-/// A wrapper around the raw bytes of a FileDataTable.
+/// A wrapper around the raw bytes of a `FileDataTable`.
 /// Bytes are Arced to allow for thread-safe access.
 pub struct FileDataTable(Arc<[u8]>);
 
-/// Wrapper around the FileDataTable which allows for threadsafe access of the FileDataTable
+/// Wrapper around the `FileDataTable` which allows for threadsafe access of the `FileDataTable`
 impl FileDataTable {
-    /// Creates a new FileDataTable from the given bytes.
+    /// Creates a new `FileDataTable` from the given bytes.
     pub fn new(bytes: Vec<u8>) -> Self {
         Self(bytes.into())
     }
@@ -59,21 +57,21 @@ async fn read_exact_and_handle_err(
     buffered_reader: &mut BufReader<File>,
     buffer: &mut [u8],
 ) -> Result<(), FileReadError> {
-    return match buffered_reader
+    match buffered_reader
         .read_exact(buffer)
         .await
         .map_err(|err| match err.kind() {
             io::ErrorKind::UnexpectedEof => FileReadError::UnexpectedEOF(
-                "unexpected EOF: file ended before magic bytes ended".to_string(),
+                "unexpected EOF: file ended before magic bytes ended".to_owned(),
             ),
             _ => FileReadError::UnexpectedError(
                 io::ErrorKind::Other,
-                format!("unexpected I/O error: {}", err),
+                format!("unexpected I/O error: {err}"),
             ),
         }) {
         Ok(_) => Ok(()),
         Err(err) => Err(err),
-    };
+    }
 }
 
 fn is_root_output_node(attrs: Vec<OwnedAttribute>) -> bool {
@@ -172,8 +170,7 @@ impl DecoderFactory for Aedat4 {
                                 }
                                 unknown_tag => {
                                     eprintln!(
-                                        "found unexpected tag: {} in xml metadata",
-                                        unknown_tag
+                                        "found unexpected tag: {unknown_tag} in xml metadata"
                                     );
                                 }
                             }
@@ -210,13 +207,13 @@ impl DecoderFactory for Aedat4 {
                 let compression = iohe_root.compression();
                 Some(VideoMetadata {
                     output_modules: module_vector,
-                    compression: compression,
+                    compression,
                 })
             }
             None => None,
         };
 
-        println!("metadata: {:?}", metadata);
+        println!("metadata: {metadata:?}");
 
         // read the data table, this contains indexes for each packet
         println!("offset is 0x{:X}", iohe_root.data_table_offset());
@@ -230,7 +227,7 @@ impl DecoderFactory for Aedat4 {
             .read_to_end(&mut data_table_buffer)
             .await
             .expect("TODO: panic message");
-        println!("buffer: {:X?}", data_table_buffer);
+        println!("buffer: {data_table_buffer:X?}");
 
         let compresssion = metadata
             .clone()
@@ -337,7 +334,7 @@ impl Decoder for Aedat4Decoder {
             .expect("expected metadata, should not be here")
             .compression;
 
-        let decompressed_buffer = Aedat4Decoder::decompress(compresssion, &packet_buffer)?;
+        let decompressed_buffer = Self::decompress(compresssion, &packet_buffer)?;
 
         let identifier = String::from_utf8_lossy(&decompressed_buffer[8..12]).to_string();
 
@@ -355,7 +352,7 @@ impl Decoder for Aedat4Decoder {
             _ => {
                 return Err(DecodeError::UnexpectedError(
                     ErrorKind::Other,
-                    format!("unknown identifier: {}", identifier),
+                    format!("unknown identifier: {identifier}"),
                 ));
             }
         };

@@ -1,7 +1,6 @@
 // Prevent console window in addition to Slint window in Windows release builds when, e.g., starting the app via file manager. Ignored on other platforms.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use std::sync::{Arc, Mutex};
 
 use slint::{
     ToSharedString,
@@ -14,7 +13,6 @@ pub mod visualisations;
 use visualisations::timeline;
 
 pub mod state;
-use state::AppState;
 
 slint::include_modules!();
 
@@ -42,7 +40,7 @@ pub fn main() {
         .set_rendering_notifier(move |state, graphics_api| match state {
             slint::RenderingState::RenderingSetup => {
                 if let slint::GraphicsAPI::WGPU30 { device, queue, .. } = graphics_api {
-                    renderer = Some(Renderer::new(&device, &queue));
+                    renderer = Some(Renderer::new(device, queue));
                     // Set UI elements in debug menu
                     if let Some(editor_window) = editor_weak.upgrade() {
                         editor_window.set_render_backend("renderer-femtovg-wgpu".into());
@@ -54,11 +52,10 @@ pub fn main() {
             slint::RenderingState::BeforeRendering => {
                 if let Some(renderer) = &mut renderer {
                     let texture = renderer.render();
-                    if let Ok(image) = slint::Image::try_from(texture) {
-                        if let Some(editor_window) = editor_weak.upgrade() {
+                    if let Ok(image) = slint::Image::try_from(texture)
+                        && let Some(editor_window) = editor_weak.upgrade() {
                             editor_window.set_texture(image);
                         }
-                    }
                 }
             }
             slint::RenderingState::AfterRendering => {}
