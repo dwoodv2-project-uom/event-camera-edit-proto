@@ -1,20 +1,21 @@
-use std::io::{ErrorKind, Read};
+use std::io::{ErrorKind, Read, SeekFrom};
 
 use async_trait::async_trait;
 ///
 /// Decoder for the AEDAT4 file format decribed [here](https://docs.inivation.com/software/software-advanced-usage/file-formats/aedat-4.0.html).
 ///
-use tokio::io::{self, AsyncReadExt, BufReader};
+use tokio::io::{self, AsyncReadExt, AsyncSeekExt, BufReader};
 
 use xml::{
     attribute::OwnedAttribute,
     reader::{EventReader, XmlEvent},
 };
 
-use std::io::Cursor;
-
-use lz4;
-
+use crate::file_data_table::{
+    FileDataTable as FlatbuffersFileDataTable, root_as_file_data_table,
+    root_as_file_data_table_unchecked, size_prefixed_root_as_file_data_table,
+    size_prefixed_root_as_file_data_table_unchecked,
+};
 use crate::{
     aedat4_data_generated,
     aedat4_header_generated::{self, CompressionType},
@@ -25,12 +26,37 @@ use crate::{
     error::{DecodeError, FileReadError},
     file::{AEDAT4_FORMAT, FileFormat},
 };
+use lz4;
+use std::io::Cursor;
+use std::pin::Pin;
+use std::sync::Arc;
+use tokio::fs::File;
 
 /// Struct representing the state of AEDAT4 codec.
 pub struct Aedat4;
 
+/// A wrapper around the raw bytes of a FileDataTable.
+/// Bytes are Arced to allow for thread-safe access.
+pub struct FileDataTable(Arc<[u8]>);
+
+/// Wrapper around the FileDataTable which allows for threadsafe access of the FileDataTable
+impl FileDataTable {
+    /// Creates a new FileDataTable from the given bytes.
+    pub fn new(bytes: Vec<u8>) -> Self {
+        Self(bytes.into())
+    }
+
+    /// Turns the raw bytes into a [`FlatbuffersFileDataTable`]. This is unsafe because it does not
+    /// check the validity of the bytes but they are validated when the file was opened.
+    pub fn get(&self) -> FlatbuffersFileDataTable<'_> {
+        // SAFETY:
+        // 1. validity is checked in Aedat4::open()
+        unsafe { size_prefixed_root_as_file_data_table_unchecked(&self.0) }
+    }
+}
+
 async fn read_exact_and_handle_err(
-    buffered_reader: &mut BufReader<ByteSource>,
+    buffered_reader: &mut BufReader<File>,
     buffer: &mut [u8],
 ) -> Result<(), FileReadError> {
     return match buffered_reader
@@ -72,7 +98,8 @@ impl Codec for Aedat4 {
 }
 
 impl DecoderFactory for Aedat4 {
-    async fn open(&self, source: ByteSource) -> Result<Box<dyn Decoder>, FileReadError> {
+    type Decoder = Aedat4Decoder;
+    async fn open(&self, source: File) -> Result<Box<Aedat4Decoder>, FileReadError> {
         // check the magic bytes and parse the IOHeader to get metadata
 
         let mut buffered_reader = BufReader::new(source);
@@ -92,6 +119,8 @@ impl DecoderFactory for Aedat4 {
 
         let mut iohe_content = vec![0u8; 4 + header_size]; // parser expects a 4 byte size prefix when using `size_prefixed_root_...`
         read_exact_and_handle_err(&mut buffered_reader, &mut iohe_content[4..]).await?;
+        println!("size: {header_size}");
+
         let iohe_root = aedat4_header_generated::size_prefixed_root_as_ioheader(&iohe_content)
             .map_err(|_err| {
                 FileReadError::UnexpectedError(
@@ -101,6 +130,13 @@ impl DecoderFactory for Aedat4 {
                     ),
                 )
             })?;
+
+        if iohe_root.data_table_offset() == -1 {
+            return Err(FileReadError::UnexpectedError(
+                ErrorKind::InvalidData,
+                String::from("File must contain file data table, this is for indexing purposes."),
+            ));
+        }
 
         // extract metadata from xml in iohe_root
         // the xml contains a "outinfo" section, with numbered modules, from 0...n
@@ -182,40 +218,72 @@ impl DecoderFactory for Aedat4 {
 
         println!("metadata: {:?}", metadata);
 
-        Ok(Box::new(Aedat4Decoder {
-            offset: iohe_root.data_table_offset(),
+        // read the data table, this contains indexes for each packet
+        println!("offset is 0x{:X}", iohe_root.data_table_offset());
+        buffered_reader
+            .seek(SeekFrom::Start(iohe_root.data_table_offset() as u64))
+            .await
+            .expect("TODO: panic message");
+
+        let mut data_table_buffer = Vec::new();
+        buffered_reader
+            .read_to_end(&mut data_table_buffer)
+            .await
+            .expect("TODO: panic message");
+        println!("buffer: {:X?}", data_table_buffer);
+
+        let compresssion = metadata
+            .clone()
+            .expect("expected metadata, should not be here")
+            .compression;
+
+        let decompressed_buffer =
+            <Aedat4Decoder as Aedat4DecoderExt>::decompress(compresssion, &data_table_buffer)
+                .unwrap();
+
+        // Validation step for flatbuffer, as we use the unsafe root_as_unchecked from now on.
+        let _data_table =
+            size_prefixed_root_as_file_data_table(&decompressed_buffer).map_err(|_err| {
+                println!("{_err}");
+                FileReadError::UnexpectedError(
+                    ErrorKind::InvalidData,
+                    String::from(
+                        "DataTable is malformed, expected a valid, size-prefixed flatbuffer.",
+                    ),
+                )
+            })?;
+
+        let decoder = Aedat4Decoder {
+            file_data_table: FileDataTable::new(decompressed_buffer),
             current_timestamp: 0,
             current_frame: 1,
             buffered_reader,
-            metadata: metadata,
-        }))
+            metadata,
+        };
+
+        Ok(Box::new(decoder))
     }
 }
 
 /// State for the AEDAT4 decoder.
-struct Aedat4Decoder {
-    offset: i64,
+pub struct Aedat4Decoder {
+    pub file_data_table: FileDataTable,
     /// The current timestamp in microseconds.
-    current_timestamp: i64,
+    pub current_timestamp: i64,
     /// The current frame number.
-    current_frame: i64,
+    pub current_frame: i64,
     /// The buffered reader for reading the AEDAT4 file.
-    buffered_reader: BufReader<ByteSource>,
+    pub buffered_reader: BufReader<File>,
     /// The metadata for the video.
-    metadata: Option<VideoMetadata>,
+    pub metadata: Option<VideoMetadata>,
 }
 
 trait Aedat4DecoderExt {
-    fn decompress(&self, compression: CompressionType, data: &[u8])
-    -> Result<Vec<u8>, DecodeError>;
+    fn decompress(compression: CompressionType, data: &[u8]) -> Result<Vec<u8>, DecodeError>;
 }
 
 impl Aedat4DecoderExt for Aedat4Decoder {
-    fn decompress(
-        &self,
-        compression: CompressionType,
-        data: &[u8],
-    ) -> Result<Vec<u8>, DecodeError> {
+    fn decompress(compression: CompressionType, data: &[u8]) -> Result<Vec<u8>, DecodeError> {
         match compression {
             CompressionType::NONE => Ok(data.to_vec()),
             CompressionType::LZ4 => {
@@ -250,11 +318,12 @@ impl Decoder for Aedat4Decoder {
 
         let header = aedat4_data_generated::PacketHeader(header_buffer);
 
+        /*
         print!(
             "[decode] packet #{:?}, compressed size: {} bytes, ",
             header.id(),
             header.size()
-        );
+        );*/
 
         let mut packet_buffer = vec![0u8; header.size() as usize];
         self.buffered_reader
@@ -262,14 +331,13 @@ impl Decoder for Aedat4Decoder {
             .await
             .map_err(|e| DecodeError::UnexpectedError(ErrorKind::Other, e.to_string()))?;
 
-        let compresssion = self.metadata.clone().expect("expected metadata, should not be here").compression;
+        let compresssion = self
+            .metadata
+            .clone()
+            .expect("expected metadata, should not be here")
+            .compression;
 
-
-
-        let decompressed_buffer = self.decompress(
-            compresssion,
-            &packet_buffer,
-        )?;
+        let decompressed_buffer = Aedat4Decoder::decompress(compresssion, &packet_buffer)?;
 
         let identifier = String::from_utf8_lossy(&decompressed_buffer[8..12]).to_string();
 

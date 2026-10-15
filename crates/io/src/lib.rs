@@ -26,3 +26,7 @@ pub mod imu;
 #[path = "../generated/trigger_generated.rs"]
 #[allow(unsafe_code)]
 pub mod trigger;
+
+#[path = "../generated/file_data_table_generated.rs"]
+#[allow(unsafe_code)]
+pub mod file_data_table;

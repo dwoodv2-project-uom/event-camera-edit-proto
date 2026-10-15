@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use std::{pin::Pin, str::FromStr};
+use tokio::fs::File;
 use tokio::io::AsyncRead;
 
 use crate::{
@@ -25,9 +26,10 @@ pub trait Codec {
 
 /// Creates a decoder for a codec with a decoder implementation.
 pub trait DecoderFactory: Codec {
-    /// Opens and validates a stream of bytes, e.g. file, network stream, etc.
+    type Decoder: Decoder;
+    /// Opens and validates a file.
     /// It does not decode the entire file, responsibility is delegated to the decoder.
-    async fn open(&self, source: ByteSource) -> Result<Box<dyn Decoder>, FileReadError>;
+    async fn open(&self, source: File) -> Result<Box<Self::Decoder>, FileReadError>;
 }
 
 /// Represents a decoder which decodes a video file. Basically just a fancy iterator over the decoded frames.

@@ -1,0 +1,25 @@
+file_identifier "FTAB";
+
+struct PacketHeader {
+	id: int32;
+	size: int32;
+}
+
+table PacketMetadata {
+    /// Offset in bytes from where the data (size prefix flatbuffer) starts.
+	byte_offset: int64;
+	/// Header of packet, which contains id and size
+	header: PacketHeader (native_inline);
+	/// Number of events, IMU, FRME etc.
+	num_elements: int64;
+	/// Timestamp of the start of the event, IMU, FRME etc.
+	ts_start: int64;
+	// Timestamp of the end of the event, IMU, FRME etc.
+	ts_end: int64;
+}
+
+table FileDataTable {
+	table: [PacketMetadata] (native_inline);
+}
+
+root_type FileDataTable;
