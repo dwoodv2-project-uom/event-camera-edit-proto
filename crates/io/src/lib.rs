@@ -2,6 +2,7 @@ pub mod aedat4_decoder;
 pub mod codec;
 pub mod error;
 pub mod file;
+pub mod utils;
 
 #[path = "../generated/aedat4_header_generated.rs"]
 #[expect(unsafe_code)]

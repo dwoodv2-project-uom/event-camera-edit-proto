@@ -1,3 +1,4 @@
+use std::error::Error;
 use std::io::{ErrorKind, Read as _, SeekFrom};
 
 use async_trait::async_trait;
@@ -11,17 +12,16 @@ use xml::{
     reader::{EventReader, XmlEvent},
 };
 
+use crate::codec::PacketType;
 use crate::file_data_table::{
-    FileDataTable as FlatbuffersFileDataTable, size_prefixed_root_as_file_data_table,
-    size_prefixed_root_as_file_data_table_unchecked,
+    FileDataTable as FlatbuffersFileDataTable, PacketHeader, root_as_file_data_table,
+    size_prefixed_root_as_file_data_table, size_prefixed_root_as_file_data_table_unchecked,
 };
+use crate::utils::decompress;
 use crate::{
     aedat4_data_generated,
     aedat4_header_generated::{self, CompressionType},
-    codec::{
-        Codec, Decoder, DecoderFactory, ModuleInfo, Packet, PacketContent,
-        VideoMetadata,
-    },
+    codec::{Codec, Decoder, DecoderFactory, ModuleInfo, Packet, PacketContent, VideoMetadata},
     error::{DecodeError, FileReadError},
     file::{AEDAT4_FORMAT, FileFormat},
 };
@@ -33,23 +33,143 @@ use tokio::fs::File;
 /// Struct representing the state of AEDAT4 codec.
 pub struct Aedat4;
 
-/// A wrapper around the raw bytes of a `FileDataTable`.
-/// Bytes are Arced to allow for thread-safe access.
-pub struct FileDataTable(Arc<[u8]>);
+#[derive(Debug)]
+pub struct PacketMetadata {
+    header: PacketHeader,
+    byte_offset: i64,
+    num_elements: i64,
+    ts_start: i64,
+    ts_end: i64,
+}
+
+#[derive(Debug)]
+pub struct FileDataTableEntry {
+    packet_type: PacketType,
+    metadata: PacketMetadata,
+}
+
+#[derive(Debug)]
+pub struct FileDataTable {
+    total_events: i64,
+    total_frames: i64,
+    total_imu: i64,
+    total_trig: i64,
+    ts_start: i64,
+    ts_end: i64,
+    table: Vec<FileDataTableEntry>,
+}
 
 /// Wrapper around the `FileDataTable` which allows for threadsafe access of the `FileDataTable`
 impl FileDataTable {
     /// Creates a new `FileDataTable` from the given bytes.
-    pub fn new(bytes: Vec<u8>) -> Self {
-        Self(bytes.into())
-    }
+    /// We have to do some extra reading, as we need to determine the type of the packet (therefore have to read)
+    pub async fn new(
+        reader: &mut BufReader<File>,
+        decompressed_bytes: Vec<u8>,
+        compression_type: CompressionType,
+    ) -> Result<Self, DecodeError> {
+        // Get the original file data table from the file
+        let file_data_table_fb = size_prefixed_root_as_file_data_table(&decompressed_bytes)
+            .map_err(|e| {
+                DecodeError::UnexpectedError(
+                    ErrorKind::InvalidData,
+                    String::from("flatbuffer was malformed: ") + &e.to_string(),
+                )
+            })?;
 
-    /// Turns the raw bytes into a [`FlatbuffersFileDataTable`]. This is unsafe because it does not
-    /// check the validity of the bytes but they are validated when the file was opened.
-    pub fn get(&self) -> FlatbuffersFileDataTable<'_> {
-        // SAFETY:
-        // 1. validity is checked in Aedat4::open()
-        unsafe { size_prefixed_root_as_file_data_table_unchecked(&self.0) }
+        let mut table = Vec::new();
+        let mut total_events = 0;
+        let mut total_frames = 0;
+        let mut total_imu = 0;
+        let mut total_trig = 0;
+        let mut ts_start = i64::MAX;
+        let mut ts_end = i64::MIN;
+
+        let fb_table = file_data_table_fb.table().unwrap();
+
+        for element in fb_table {
+            let header = element.header().unwrap();
+
+            let metadata = PacketMetadata {
+                header: header.clone(),
+                byte_offset: element.byte_offset(),
+                num_elements: element.num_elements(),
+                ts_start: element.ts_start(),
+                ts_end: element.ts_end(),
+            };
+
+            ts_start = ts_start.min(metadata.ts_start);
+            ts_end = ts_end.max(metadata.ts_end);
+
+            reader
+                .seek(SeekFrom::Start(element.byte_offset() as u64))
+                .await
+                .map_err(|e| {
+                    DecodeError::UnexpectedError(ErrorKind::UnexpectedEof, e.to_string())
+                })?;
+
+            let mut header_bytes = Vec::new();
+            header_bytes.resize(header.size() as usize, 0);
+
+            // TODO: this reads the entire packet and decompresses it (slow!)
+            // can we decompress just some bytes and still get it to work with LZ4?
+            reader.read_exact(&mut header_bytes).await.map_err(|e| {
+                DecodeError::UnexpectedError(ErrorKind::UnexpectedEof, e.to_string())
+            })?;
+
+            let decompressed_bytes = decompress(compression_type, &header_bytes).map_err(|_e| {
+                DecodeError::UnexpectedError(
+                    ErrorKind::UnexpectedEof,
+                    "decompression failed".to_string(),
+                )
+            })?;
+
+            if decompressed_bytes.len() < 8 {
+                return Err(DecodeError::UnexpectedError(
+                    ErrorKind::UnexpectedEof,
+                    "found EOF before flatbuffer data started ".to_string(),
+                ));
+            }
+            // non-size prefixed bytes: root_table_offset[0:3], identifier [4:7], data [8:]
+            // size prefixed bytes: root_table_offset[0:3], size prefix [4:7], identifier [8:12], data [12:]
+            let bytes_4_7 = String::from_utf8_lossy(&decompressed_bytes[4..7]).to_string();
+            let packet_type = bytes_4_7.parse::<PacketType>().or_else(|_err| {
+                let bytes_8_12 = String::from_utf8_lossy(&decompressed_bytes[8..12]).to_string();
+                bytes_8_12.parse::<PacketType>()
+            });
+
+            if packet_type.is_err() {
+                return Err(DecodeError::UnexpectedError(
+                    ErrorKind::Other,
+                    "failed to parse packet type".to_string(),
+                ));
+            }
+
+            let packet_type = packet_type.unwrap();
+            match packet_type {
+                PacketType::EventPacket => total_events += element.num_elements(),
+                PacketType::FramePacket => total_frames += element.num_elements(),
+                PacketType::ImuPacket => total_imu += element.num_elements(),
+                PacketType::TriggerPacket => total_trig += element.num_elements(),
+            }
+
+            let packet = FileDataTableEntry {
+                packet_type,
+                metadata,
+            };
+
+            table.push(packet);
+        }
+
+        Ok(Self {
+            table,
+            total_events,
+            total_frames,
+            total_imu,
+            total_trig,
+            ts_start,
+            ts_end,
+        })
     }
 }
 
@@ -216,7 +336,6 @@ impl DecoderFactory for Aedat4 {
         println!("metadata: {metadata:?}");
 
         // read the data table, this contains indexes for each packet
-        println!("offset is 0x{:X}", iohe_root.data_table_offset());
         buffered_reader
             .seek(SeekFrom::Start(iohe_root.data_table_offset() as u64))
             .await
@@ -227,7 +346,6 @@ impl DecoderFactory for Aedat4 {
             .read_to_end(&mut data_table_buffer)
             .await
             .expect("TODO: panic message");
-        println!("buffer: {data_table_buffer:X?}");
 
         let compresssion = metadata
             .clone()
@@ -235,28 +353,25 @@ impl DecoderFactory for Aedat4 {
             .compression;
 
         let decompressed_buffer =
-            <Aedat4Decoder as Aedat4DecoderExt>::decompress(compresssion, &data_table_buffer)
-                .unwrap();
+            crate::utils::decompress(compresssion, &data_table_buffer).unwrap();
 
-        // Validation step for flatbuffer, as we use the unsafe root_as_unchecked from now on.
-        let _data_table =
-            size_prefixed_root_as_file_data_table(&decompressed_buffer).map_err(|_err| {
-                println!("{_err}");
-                FileReadError::UnexpectedError(
-                    ErrorKind::InvalidData,
-                    String::from(
-                        "DataTable is malformed, expected a valid, size-prefixed flatbuffer.",
-                    ),
-                )
-            })?;
+        let file_data_table =
+            FileDataTable::new(&mut buffered_reader, decompressed_buffer, compresssion)
+                .await
+                .map_err(|e| {
+                    FileReadError::UnexpectedError(
+                        ErrorKind::InvalidData,
+                        "Failed to parse file data table".to_string(),
+                    )
+                })?;
 
         let decoder = Aedat4Decoder {
-            file_data_table: FileDataTable::new(decompressed_buffer),
-            current_timestamp: 0,
-            current_frame: 1,
+            file_data_table: file_data_table,
             buffered_reader,
             metadata,
         };
+
+        println!("file_data_table: {:?}", decoder.file_data_table);
 
         Ok(Box::new(decoder))
     }
@@ -265,37 +380,10 @@ impl DecoderFactory for Aedat4 {
 /// State for the AEDAT4 decoder.
 pub struct Aedat4Decoder {
     pub file_data_table: FileDataTable,
-    /// The current timestamp in microseconds.
-    pub current_timestamp: i64,
-    /// The current frame number.
-    pub current_frame: i64,
     /// The buffered reader for reading the AEDAT4 file.
     pub buffered_reader: BufReader<File>,
     /// The metadata for the video.
     pub metadata: Option<VideoMetadata>,
-}
-
-trait Aedat4DecoderExt {
-    fn decompress(compression: CompressionType, data: &[u8]) -> Result<Vec<u8>, DecodeError>;
-}
-
-impl Aedat4DecoderExt for Aedat4Decoder {
-    fn decompress(compression: CompressionType, data: &[u8]) -> Result<Vec<u8>, DecodeError> {
-        match compression {
-            CompressionType::NONE => Ok(data.to_vec()),
-            CompressionType::LZ4 => {
-                let mut decoder =
-                    lz4::Decoder::new(Cursor::new(data)).expect("decoder failed to init");
-                let mut decompressed = Vec::new();
-                decoder
-                    .read_to_end(&mut decompressed)
-                    .map_err(|e| DecodeError::UnexpectedError(ErrorKind::Other, e.to_string()))?;
-
-                Ok(decompressed)
-            }
-            _ => unimplemented!("unsupported compression type: {:?}", compression),
-        }
-    }
 }
 
 #[async_trait]
@@ -303,6 +391,16 @@ impl Decoder for Aedat4Decoder {
     fn metadata(&self) -> &VideoMetadata {
         self.metadata.as_ref().unwrap()
     }
+
+    /*
+
+    async fn packet_by_index(&self, i: u32) -> Result<Packet, &'static str> {
+        todo!()
+    }
+
+    async fn packet_by_ts(&self, t1: u32, t2: Option<u32>) -> Result<Vec<Packet>, &'static str> {
+        todo!()
+    }*/
 
     async fn next_packet(&mut self) -> Result<Option<Packet>, DecodeError> {
         // parse packet header, this is exactly 8 bytes: https://docs.inivation.com/software/software-advanced-usage/file-formats/aedat-4.0.html
@@ -334,7 +432,7 @@ impl Decoder for Aedat4Decoder {
             .expect("expected metadata, should not be here")
             .compression;
 
-        let decompressed_buffer = Self::decompress(compresssion, &packet_buffer)?;
+        let decompressed_buffer = decompress(compresssion, &packet_buffer)?;
 
         let identifier = String::from_utf8_lossy(&decompressed_buffer[8..12]).to_string();
 
@@ -343,18 +441,11 @@ impl Decoder for Aedat4Decoder {
             buffer: decompressed_buffer,
         };
 
-        // Validate the identifier and map it to the appropriate packet type.
-        let packet = match identifier.as_str() {
-            "EVTS" => Packet::EventPacket(packet_content),
-            "FRME" => Packet::FramePacket(packet_content),
-            "IMUS" => Packet::ImuPacket(packet_content),
-            "TRIG" => Packet::TriggerPacket(packet_content),
-            _ => {
-                return Err(DecodeError::UnexpectedError(
-                    ErrorKind::Other,
-                    format!("unknown identifier: {identifier}"),
-                ));
-            }
+        let packet = match identifier.parse::<PacketType>()? {
+            PacketType::EventPacket => Packet::EventPacket(packet_content),
+            PacketType::FramePacket => Packet::FramePacket(packet_content),
+            PacketType::ImuPacket => Packet::ImuPacket(packet_content),
+            PacketType::TriggerPacket => Packet::TriggerPacket(packet_content),
         };
 
         Ok(Some(packet))

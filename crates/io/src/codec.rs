@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use std::{pin::Pin, str::FromStr};
+use std::{io::ErrorKind, pin::Pin, str::FromStr};
 use tokio::fs::File;
 use tokio::io::AsyncRead;
 
@@ -35,6 +35,12 @@ pub trait DecoderFactory: Codec {
 pub trait Decoder {
     /// Get metadata about the decoded video.
     fn metadata(&self) -> &VideoMetadata;
+
+    /// Get packet at index i
+    //async fn packet_by_index(&self, i: u32) -> Result<Packet>;
+
+    /// Binary search of packet(s) between t1 and t2
+    //async fn packet_by_ts(&self, t1: u32, t2: Option<u32>) -> Result<Vec<Packet>>;
 
     /// Decode the next frame.
     async fn next_packet(&mut self) -> Result<Option<Packet>, DecodeError>;
@@ -118,4 +124,29 @@ pub enum Packet {
     FramePacket(PacketContent),
     ImuPacket(PacketContent),
     TriggerPacket(PacketContent),
+}
+
+#[derive(Debug, Clone)]
+pub enum PacketType {
+    EventPacket,
+    FramePacket,
+    ImuPacket,
+    TriggerPacket,
+}
+
+impl FromStr for PacketType {
+    type Err = DecodeError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_ascii_uppercase().as_str() {
+            "EVTS" => Ok(PacketType::EventPacket),
+            "FRME" => Ok(PacketType::FramePacket),
+            "IMUS" => Ok(PacketType::ImuPacket),
+            "TRIG" => Ok(PacketType::TriggerPacket),
+            _ => Err(DecodeError::UnexpectedError(
+                ErrorKind::Other,
+                format!("unknown identifier: {s}"),
+            )),
+        }
+    }
 }
