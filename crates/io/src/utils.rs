@@ -1,4 +1,4 @@
-use std::io::{Cursor, ErrorKind, Read};
+use std::io::{Cursor, ErrorKind, Read as _};
 
 use crate::{aedat4_header_generated::CompressionType, error::DecodeError};
 

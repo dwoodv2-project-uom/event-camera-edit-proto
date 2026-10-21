@@ -40,7 +40,11 @@ pub trait Decoder {
     //async fn packet_by_index(&self, i: u32) -> Result<Packet>;
 
     /// Binary search of packet(s) between t1 and t2
-    //async fn packet_by_ts(&self, t1: u32, t2: Option<u32>) -> Result<Vec<Packet>>;
+    async fn packets_by_ts_range(
+        &mut self,
+        t1: i64,
+        t2: i64,
+    ) -> Result<Option<Vec<Packet>>, DecodeError>;
 
     /// Decode the next frame.
     async fn next_packet(&mut self) -> Result<Option<Packet>, DecodeError>;
@@ -139,10 +143,10 @@ impl FromStr for PacketType {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.trim().to_ascii_uppercase().as_str() {
-            "EVTS" => Ok(PacketType::EventPacket),
-            "FRME" => Ok(PacketType::FramePacket),
-            "IMUS" => Ok(PacketType::ImuPacket),
-            "TRIG" => Ok(PacketType::TriggerPacket),
+            "EVTS" => Ok(Self::EventPacket),
+            "FRME" => Ok(Self::FramePacket),
+            "IMUS" => Ok(Self::ImuPacket),
+            "TRIG" => Ok(Self::TriggerPacket),
             _ => Err(DecodeError::UnexpectedError(
                 ErrorKind::Other,
                 format!("unknown identifier: {s}"),
