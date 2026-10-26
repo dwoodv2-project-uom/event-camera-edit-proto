@@ -18,6 +18,14 @@ export component AppWindow inherits Window {
     in property <string> device;
     in property <string> device_capabilities;
 
+    in property <string> filename;
+    in property <string> sensor;
+    in property <string> events: "0";
+    in property <string> duration: "0 µs";
+    in property <string> file_error;
+    in property <bool> file_loading;
+
+    callback open_file();
     pure callback render_timeline(float, float) -> image;
 
     debug_menu := DebugPopup {
@@ -33,6 +41,8 @@ export component AppWindow inherits Window {
 
             MenuItem {
                 title: "Open...";
+                enabled: !root.file_loading;
+                activated => { root.open_file(); }
             }
 
             MenuItem {
@@ -54,14 +64,11 @@ export component AppWindow inherits Window {
 
     FlexboxLayout {
         width: 100%;
+        height: 100%;
         spacing: 5px;
         padding: 5px;
         flex-direction: column;
 
-        property <string> filename: "";
-        property <string> sensor: "";
-        property <int> events: 0;
-        property <string> duration: "0 ns";
         property <int> acc: 0;
         property <int> acc_decay: 0;
         property <int> ts_current: 0;
@@ -110,6 +117,17 @@ export component AppWindow inherits Window {
 
                     Text {
                         text: "Duration: " + duration;
+                    }
+
+                    Text {
+                        visible: root.file_loading;
+                        text: "Opening file...";
+                    }
+
+                    Text {
+                        visible: root.file_error != "";
+                        text: root.file_error;
+                        overflow: elide;
                     }
                     // divider
                     Rectangle {

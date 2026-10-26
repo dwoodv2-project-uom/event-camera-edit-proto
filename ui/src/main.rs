@@ -1,18 +1,26 @@
 // Prevent console window in addition to Slint window in Windows release builds when, e.g., starting the app via file manager. Ignored on other platforms.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+pub mod renderer;
 
-
+use renderer::Renderer;
 use slint::{
     ToSharedString,
     wgpu_30::{WGPUConfiguration, WGPUSettings, wgpu},
 };
-pub mod renderer;
-use renderer::Renderer;
+
+use std::{
+    path::PathBuf,
+    sync::{Arc, Mutex},
+};
 
 pub mod visualisations;
 use visualisations::timeline;
 
-pub mod state;
+pub mod app;
+pub mod cache;
+
+use app::state::AppState;
+use io::{aedat4_decoder::Aedat4, codec::DecoderFactory};
 
 slint::include_modules!();
 
@@ -29,7 +37,8 @@ pub fn main() {
         .expect("Unable to create backend with WGPU based renderer");
 
     let editor_window = AppWindow::new().expect("failed to create app window");
-    wire(&editor_window);
+    let state = AppState::new();
+    wire(&editor_window, state);
 
     let editor_weak = editor_window.as_weak();
     let mut renderer = None;
@@ -53,9 +62,10 @@ pub fn main() {
                 if let Some(renderer) = &mut renderer {
                     let texture = renderer.render();
                     if let Ok(image) = slint::Image::try_from(texture)
-                        && let Some(editor_window) = editor_weak.upgrade() {
-                            editor_window.set_texture(image);
-                        }
+                        && let Some(editor_window) = editor_weak.upgrade()
+                    {
+                        editor_window.set_texture(image);
+                    }
                 }
             }
             slint::RenderingState::AfterRendering => {}
@@ -74,7 +84,8 @@ pub fn main() {
 }
 
 /// Wires all callbacks for the UI.
-fn wire(ui: &AppWindow) {
+fn wire(ui: &AppWindow, state: Arc<Mutex<AppState>>) {
+    let ui_weak = ui.as_weak();
     // Timeline rendering
     // TODO: optimise this so on_render_timeline is only called when the timeline data changes (e.g. scale)
     {
@@ -86,6 +97,78 @@ fn wire(ui: &AppWindow) {
             timeline::render(width as u32, height as u32)
         });
     }
-    // Every callback should have it's own scope
-    {}
+    // File opening logic
+    {
+        ui.on_open_file(move || {
+            let Some(ui) = ui_weak.upgrade() else {
+                return;
+            };
+            if ui.get_file_loading() {
+                return;
+            }
+            ui.set_file_loading(true);
+            ui.set_file_error("".into());
+
+            let ui_weak = ui.as_weak();
+            let state = Arc::clone(&state);
+            let handle = std::thread::spawn(move || {
+                let result = pick_and_open_file();
+                let _ = ui_weak.upgrade_in_event_loop(move |ui| {
+                    ui.set_file_loading(false);
+                    match result {
+                        Ok(Some((path, decoder))) => {
+                            let sensor = decoder
+                                .metadata
+                                .as_ref()
+                                .and_then(|metadata| {
+                                    metadata
+                                        .output_modules
+                                        .iter()
+                                        .find_map(|module| module.output_info.source.as_deref())
+                                })
+                                .unwrap_or("Unknown")
+                                .to_owned();
+                            let events = decoder.file_data_table.total_events.to_string();
+                            let duration =
+                                decoder.file_data_table.ts_end - decoder.file_data_table.ts_start;
+                            state.lock().expect("lock failed").set_file_state(*decoder);
+                            ui.set_filename(path.to_string_lossy().as_ref().into());
+                            ui.set_sensor(sensor.into());
+                            ui.set_events(events.into());
+                            ui.set_duration(format!("{duration} µs").into());
+                        }
+                        Ok(None) => {}
+                        Err(error) => ui.set_file_error(error.into()),
+                    }
+                });
+            });
+            let _ = handle.join();
+        });
+    }
+}
+
+fn pick_and_open_file() -> Result<Option<(PathBuf, Box<io::aedat4_decoder::Aedat4Decoder>)>, String>
+{
+    let Some(path) = rfd::FileDialog::new()
+        .add_filter(".aedat4", &["aedat4"])
+        .pick_file()
+    else {
+        return Ok(None);
+    };
+
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|error| format!("could not start file loader thread: {error}"))?;
+    let decoder = runtime.block_on(async {
+        let file = tokio::fs::File::open(&path)
+            .await
+            .map_err(|err| format!("could not open file: {} - {err}", path.display()))?;
+        Aedat4
+            .open(file)
+            .await
+            .map_err(|_err| format!("could not decode file"))
+    })?;
+
+    Ok(Some((path, decoder)))
 }

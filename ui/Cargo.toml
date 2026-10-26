@@ -6,10 +6,16 @@ edition = "2024"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+io = { path = "../crates/io" }
 chrono = "0.4.45"
+rfd = "0.15"
+tokio = { version = "1", features = ["full"] }
 plotters = "0.3.7"
 rand = "0.10.3"
-slint = { version="1.18.1", features=["unstable-wgpu-30", "renderer-femtovg-wgpu"] }
+slint = { version = "1.18.1", features = [
+    "unstable-wgpu-30",
+    "renderer-femtovg-wgpu",
+] }
 wgpu = { version = "30.0.1", features = ["wgsl"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
