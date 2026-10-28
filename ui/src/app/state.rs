@@ -67,10 +67,11 @@ impl AppState {
 
         for i in 1..NUM_CHECKPOINTS {
             let ts = min_ts + step * i as u64;
-            let mut last_pol_offs = Vec::new();
-            last_pol_offs.resize(width as usize * height as usize, 0u64);
-            let mut last_pol_ons = Vec::new();
-            last_pol_ons.resize(width as usize * height as usize, 0u64);
+            let last_checkpoint = &checkpoints[(i - 1) as usize];
+            // we just overwrite the last_polarity_off/on with the new values using the checkpoints we have made
+            // this means we do not need to read the entire file up to 0 -> ts + step for each checkpoint
+            let mut last_pol_offs = last_checkpoint.1.last_polarity_off.clone();
+            let mut last_pol_ons = last_checkpoint.1.last_polarity_on.clone();
 
             // Time surface checkpoints:
             // make sure step - 1 to prevent overlap with next checkpoint
