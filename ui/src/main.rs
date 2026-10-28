@@ -10,6 +10,7 @@ use slint::{
 
 use std::{
     path::PathBuf,
+    result,
     sync::{Arc, Mutex},
 };
 
@@ -17,10 +18,15 @@ pub mod visualisations;
 use visualisations::timeline;
 
 pub mod app;
+use app::state::AppState;
+
 pub mod cache;
 
-use app::state::AppState;
-use io::{aedat4_decoder::Aedat4, codec::DecoderFactory};
+use io::{
+    aedat4_decoder::{Aedat4, FileDataTable},
+    codec::{DecoderFactory, VideoMetadata},
+    file_data_table,
+};
 
 slint::include_modules!();
 
@@ -112,13 +118,17 @@ fn wire(ui: &AppWindow, state: Arc<Mutex<AppState>>) {
             let ui_weak = ui.as_weak();
             let state = Arc::clone(&state);
             let handle = std::thread::spawn(move || {
-                let result = pick_and_open_file();
+                let runtime = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .expect("could not create Tokio runtime");
+
+                let result = runtime.block_on(pick_and_open_file(state));
                 let _ = ui_weak.upgrade_in_event_loop(move |ui| {
                     ui.set_file_loading(false);
                     match result {
-                        Ok(Some((path, decoder))) => {
-                            let sensor = decoder
-                                .metadata
+                        Ok(Some((path, metadata, file_data_table))) => {
+                            let sensor = metadata
                                 .as_ref()
                                 .and_then(|metadata| {
                                     metadata
@@ -128,10 +138,8 @@ fn wire(ui: &AppWindow, state: Arc<Mutex<AppState>>) {
                                 })
                                 .unwrap_or("Unknown")
                                 .to_owned();
-                            let events = decoder.file_data_table.total_events.to_string();
-                            let duration =
-                                decoder.file_data_table.ts_end - decoder.file_data_table.ts_start;
-                            state.lock().expect("lock failed").set_file_state(*decoder);
+                            let events = file_data_table.total_events.to_string();
+                            let duration = file_data_table.ts_end - file_data_table.ts_start;
                             ui.set_filename(path.to_string_lossy().as_ref().into());
                             ui.set_sensor(sensor.into());
                             ui.set_events(events.into());
@@ -147,8 +155,9 @@ fn wire(ui: &AppWindow, state: Arc<Mutex<AppState>>) {
     }
 }
 
-fn pick_and_open_file() -> Result<Option<(PathBuf, Box<io::aedat4_decoder::Aedat4Decoder>)>, String>
-{
+async fn pick_and_open_file(
+    state: Arc<Mutex<AppState>>,
+) -> Result<Option<(PathBuf, Option<VideoMetadata>, FileDataTable)>, String> {
     let Some(path) = rfd::FileDialog::new()
         .add_filter(".aedat4", &["aedat4"])
         .pick_file()
@@ -156,19 +165,26 @@ fn pick_and_open_file() -> Result<Option<(PathBuf, Box<io::aedat4_decoder::Aedat
         return Ok(None);
     };
 
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|error| format!("could not start file loader thread: {error}"))?;
-    let decoder = runtime.block_on(async {
-        let file = tokio::fs::File::open(&path)
-            .await
-            .map_err(|err| format!("could not open file: {} - {err}", path.display()))?;
-        Aedat4
-            .open(file)
-            .await
-            .map_err(|_err| format!("could not decode file"))
-    })?;
+    let path_for_open = path.clone();
 
-    Ok(Some((path, decoder)))
+    let file = tokio::fs::File::open(&path_for_open)
+        .await
+        .map_err(|err| format!("could not open file: {} - {err}", path_for_open.display()))?;
+
+    let decoder = Aedat4
+        .open(file)
+        .await
+        .map_err(|_err| format!("could not decode file"))?;
+
+    let metadata = decoder.metadata.clone();
+
+    let file_data_table = decoder.file_data_table.clone();
+
+    state
+        .lock()
+        .expect("lock failed")
+        .set_file_state(*decoder)
+        .await;
+
+    Ok(Some((path, metadata, file_data_table)))
 }

@@ -13,10 +13,7 @@ use xml::{
 };
 
 use crate::codec::PacketType;
-use crate::file_data_table::{
-    PacketHeader,
-    size_prefixed_root_as_file_data_table,
-};
+use crate::file_data_table::{PacketHeader, size_prefixed_root_as_file_data_table};
 use crate::utils::decompress;
 use crate::{
     aedat4_data_generated,
@@ -45,7 +42,7 @@ pub struct FileDataTableEntry {
     metadata: PacketMetadata,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct FileDataTable {
     pub total_events: i64,
     pub total_frames: i64,
@@ -105,53 +102,6 @@ impl FileDataTable {
             ts_start = ts_start.min(metadata.ts_start);
             ts_end = ts_end.max(metadata.ts_end);
 
-            /*
-
-            reader
-                .seek(SeekFrom::Start(element.byte_offset() as u64))
-                .await
-                .map_err(|e| {
-                    DecodeError::UnexpectedError(ErrorKind::UnexpectedEof, e.to_string())
-                })?;
-
-            let mut header_bytes = Vec::new();
-            header_bytes.resize(header.size() as usize, 0);
-
-            // TODO: this reads the entire packet and decompresses it (slow!)
-            // can we decompress just some bytes and still get it to work with LZ4?
-            reader.read_exact(&mut header_bytes).await.map_err(|e| {
-                DecodeError::UnexpectedError(ErrorKind::UnexpectedEof, e.to_string())
-            })?;
-
-            let decompressed_bytes = decompress(compression_type, &header_bytes).map_err(|_e| {
-                DecodeError::UnexpectedError(
-                    ErrorKind::UnexpectedEof,
-                    "decompression failed".to_string(),
-                )
-            })?;
-
-            if decompressed_bytes.len() < 8 {
-                return Err(DecodeError::UnexpectedError(
-                    ErrorKind::UnexpectedEof,
-                    "found EOF before flatbuffer data started ".to_string(),
-                ));
-            }
-            // non-size prefixed bytes: root_table_offset[0:3], identifier [4:7], data [8:]
-            // size prefixed bytes: root_table_offset[0:3], size prefix [4:7], identifier [8:12], data [12:]
-            let bytes_4_7 = String::from_utf8_lossy(&decompressed_bytes[4..7]).to_string();
-            let packet_type = bytes_4_7.parse::<PacketType>().or_else(|_err| {
-                let bytes_8_12 = String::from_utf8_lossy(&decompressed_bytes[8..12]).to_string();
-                bytes_8_12.parse::<PacketType>()
-            });
-
-            if packet_type.is_err() {
-                return Err(DecodeError::UnexpectedError(
-                    ErrorKind::Other,
-                    "failed to parse packet type".to_string(),
-                ));
-            }
-
-            let packet_type = packet_type.unwrap(); */
             let packet = read_packet(
                 reader,
                 compression_type,
@@ -327,7 +277,6 @@ impl DecoderFactory for Aedat4 {
 
         let mut iohe_content = vec![0u8; 4 + header_size]; // parser expects a 4 byte size prefix when using `size_prefixed_root_...`
         read_exact_and_handle_err(&mut buffered_reader, &mut iohe_content[4..]).await?;
-        println!("size: {header_size}");
 
         let iohe_root = aedat4_header_generated::size_prefixed_root_as_ioheader(&iohe_content)
             .map_err(|_err| {
@@ -497,9 +446,6 @@ impl Decoder for Aedat4Decoder {
             let lower_bound_idx = arr.partition_point(|e| e.metadata.ts_start < t1);
             let upper_bound_idx = arr.partition_point(|e| e.metadata.ts_end <= t2);
 
-            println!(
-                "lower_bound_idx: {lower_bound_idx}, upper_bound_idx: {upper_bound_idx}"
-            );
             (lower_bound_idx, upper_bound_idx)
         }
 
@@ -546,19 +492,6 @@ impl Decoder for Aedat4Decoder {
             filtered_trigs,
         ];
 
-        println!("reading from {t1} to {t2}");
-        println!(
-            "#packets: {}, #events: {}, #frames: {}, #imus: {}, #trigs: {}",
-            filtered_events.len()
-                + filtered_frames.len()
-                + filtered_imus.len()
-                + filtered_trigs.len(),
-            filtered_events.len(),
-            filtered_frames.len(),
-            filtered_imus.len(),
-            filtered_trigs.len()
-        );
-
         let mut packets = Vec::new();
 
         for packet_type in to_read {
@@ -576,8 +509,6 @@ impl Decoder for Aedat4Decoder {
                 packets.push(packet);
             }
         }
-
-        // test print
 
         Ok(Some(packets))
     }
