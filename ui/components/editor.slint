@@ -24,9 +24,21 @@ export component AppWindow inherits Window {
     in property <string> duration: "0 µs";
     in property <string> file_error;
     in property <bool> file_loading;
+    in property <int> current_timestamp: 0;
+    in property <string> current_timestamp_formatted;
+    in property <float> offset_s;
 
     callback open_file();
+
     pure callback render_timeline(float, float) -> image;
+
+    callback pause_play(is_paused: bool);
+
+    callback skip_forward();
+
+    callback skip_backward();
+
+    callback skip_start_end(is_start: bool);
 
     debug_menu := DebugPopup {
         texture: root.texture;
@@ -72,7 +84,7 @@ export component AppWindow inherits Window {
         property <int> acc: 0;
         property <int> acc_decay: 0;
         property <int> ts_current: 0;
-        property <string> pause_play_icon: "⏸";
+        property <string> pause_play_icon: "▶︎";
 
         FlexboxLayout {
             height: 70%;
@@ -230,25 +242,38 @@ export component AppWindow inherits Window {
             // TODO: use proper icons rather than ASCII, these are just placeholder
             Button {
                 text: "⏮";
+                clicked => {
+                    skip_start_end(true)
+                }
             }
 
             Button {
                 text: "<";
+                clicked => {
+                    skip_backward()
+                }
             }
 
             Button {
                 text: pause_play_icon;
                 clicked => {
-                    pause_play_icon = pause_play_icon == "⏸" ? "▶︎" : "⏸"
+                    pause_play_icon = pause_play_icon == "⏸" ? "▶︎" : "⏸";
+                    pause_play(pause_play_icon == "▶︎");
                 }
             }
 
             Button {
                 text: ">";
+                clicked => {
+                    skip_forward()
+                }
             }
 
             Button {
                 text: "⏭";
+                clicked => {
+                    skip_start_end(false)
+                }
             }
 
             HorizontalLayout {
@@ -269,7 +294,11 @@ export component AppWindow inherits Window {
 
                 TextInput {
                     input-type: decimal;
-                    text: 1;
+                    text: current_timestamp_formatted;
+                }
+
+                Text {
+                    text: " offset:  " + offset_s + " s";
                 }
             }
         }

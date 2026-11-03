@@ -2,17 +2,15 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 pub mod renderer;
 
+use chrono::{DateTime, offset};
 use renderer::Renderer;
 use slint::{
     ToSharedString,
     wgpu_30::{WGPUConfiguration, WGPUSettings, wgpu},
 };
+use tokio::sync::Mutex;
 
-use std::{
-    path::PathBuf,
-    result,
-    sync::{Arc, Mutex},
-};
+use std::{path::PathBuf, sync::Arc, time::SystemTime};
 
 pub mod visualisations;
 use visualisations::timeline;
@@ -25,8 +23,11 @@ pub mod cache;
 use io::{
     aedat4_decoder::{Aedat4, FileDataTable},
     codec::{DecoderFactory, VideoMetadata},
-    file_data_table,
 };
+
+use crate::app::playback;
+
+use playback::{Playback, PlaybackEvent};
 
 slint::include_modules!();
 
@@ -44,7 +45,15 @@ pub fn main() {
 
     let editor_window = AppWindow::new().expect("failed to create app window");
     let state = AppState::new();
-    wire(&editor_window, state);
+
+    let runtime = Arc::new(
+        tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .expect("could not create Tokio runtime"),
+    );
+
+    wire(&editor_window, state, runtime);
 
     let editor_weak = editor_window.as_weak();
     let mut renderer = None;
@@ -79,7 +88,7 @@ pub fn main() {
                 drop(renderer.take());
             }
             _ => {
-                println!("unknown rendering state");
+                eprintln!("unknown rendering state");
             }
         })
         .expect("Failed to setup wgpu renderer");
@@ -90,7 +99,7 @@ pub fn main() {
 }
 
 /// Wires all callbacks for the UI.
-fn wire(ui: &AppWindow, state: Arc<Mutex<AppState>>) {
+fn wire(ui: &AppWindow, state: Arc<Mutex<AppState>>, runtime: Arc<tokio::runtime::Runtime>) {
     let ui_weak = ui.as_weak();
     // Timeline rendering
     // TODO: optimise this so on_render_timeline is only called when the timeline data changes (e.g. scale)
@@ -105,6 +114,8 @@ fn wire(ui: &AppWindow, state: Arc<Mutex<AppState>>) {
     }
     // File opening logic
     {
+        let state_for_open_file = Arc::clone(&state);
+        let runtime_for_open_file = Arc::clone(&runtime);
         ui.on_open_file(move || {
             let Some(ui) = ui_weak.upgrade() else {
                 return;
@@ -114,15 +125,11 @@ fn wire(ui: &AppWindow, state: Arc<Mutex<AppState>>) {
             }
             ui.set_file_loading(true);
             ui.set_file_error("".into());
+            let state = Arc::clone(&state_for_open_file);
+            let runtime = Arc::clone(&runtime_for_open_file);
 
             let ui_weak = ui.as_weak();
-            let state = Arc::clone(&state);
             let handle = std::thread::spawn(move || {
-                let runtime = tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                    .expect("could not create Tokio runtime");
-
                 let result = runtime.block_on(pick_and_open_file(state));
                 let _ = ui_weak.upgrade_in_event_loop(move |ui| {
                     ui.set_file_loading(false);
@@ -143,7 +150,14 @@ fn wire(ui: &AppWindow, state: Arc<Mutex<AppState>>) {
                             ui.set_filename(path.to_string_lossy().as_ref().into());
                             ui.set_sensor(sensor.into());
                             ui.set_events(events.into());
-                            ui.set_duration(format!("{duration} µs").into());
+                            ui.set_duration(format!("{} s", duration as f64 * 1e-6).into());
+                            ui.set_current_timestamp(file_data_table.ts_start as i32);
+                            let iso_formatted =
+                                DateTime::from_timestamp_micros(file_data_table.ts_start as i64)
+                                    .unwrap()
+                                    .to_rfc3339();
+                            ui.set_current_timestamp_formatted((&iso_formatted).into());
+                            ui.set_offset_s(0.0);
                         }
                         Ok(None) => {}
                         Err(error) => ui.set_file_error(error.into()),
@@ -151,6 +165,120 @@ fn wire(ui: &AppWindow, state: Arc<Mutex<AppState>>) {
                 });
             });
             let _ = handle.join();
+        });
+    }
+    // Skip forward event
+    {
+        let state = Arc::clone(&state);
+        let runtime = Arc::clone(&runtime);
+        let ui_weak = ui.as_weak();
+        ui.on_skip_forward(move || {
+            let state = Arc::clone(&state);
+            let ui_weak = ui_weak.clone();
+            runtime.spawn(async move {
+                let mut app_state = state.lock().await;
+                app_state
+                    .handle_playback_event(PlaybackEvent::SkipForwardEvent)
+                    .await;
+                let new_ts = app_state.playback_state.lock().await.current_timestamp;
+                let start_ts = app_state.playback_state.lock().await.start_timestamp;
+                let offset = new_ts - start_ts as u64;
+                update_timestamp(ui_weak, new_ts, offset);
+            });
+        });
+    }
+    // Skip backward event
+    {
+        let state_for_skip_backward = Arc::clone(&state);
+        let runtime = Arc::clone(&runtime);
+        let ui_weak = ui.as_weak();
+        ui.on_skip_backward(move || {
+            let state = Arc::clone(&state_for_skip_backward);
+            let ui_weak = ui_weak.clone();
+            runtime.spawn(async move {
+                let mut app_state = state.lock().await;
+                app_state
+                    .handle_playback_event(PlaybackEvent::SkipBackwardEvent)
+                    .await;
+                let new_ts = app_state.playback_state.lock().await.current_timestamp;
+                let start_ts = app_state.playback_state.lock().await.start_timestamp;
+                let offset = new_ts - start_ts as u64;
+                update_timestamp(ui_weak, new_ts, offset);
+            });
+        });
+    }
+    // Pause/play event
+    {
+        let state = Arc::clone(&state);
+        let runtime = Arc::clone(&runtime);
+        ui.on_pause_play(move |is_paused| {
+            let state = Arc::clone(&state);
+            runtime.spawn(async move {
+                let mut app_state = state.lock().await;
+                if is_paused {
+                    app_state
+                        .handle_playback_event(PlaybackEvent::PressPauseEvent)
+                        .await;
+                } else {
+                    app_state
+                        .handle_playback_event(PlaybackEvent::PressPlayEvent)
+                        .await;
+                }
+            });
+        });
+    }
+    // Skip to start/end event
+    {
+        let state = Arc::clone(&state);
+        let runtime = Arc::clone(&runtime);
+        let ui_weak = ui.as_weak();
+        ui.on_skip_start_end(move |is_start| {
+            let state = Arc::clone(&state);
+            let runtime = Arc::clone(&runtime);
+            let ui_weak = ui_weak.clone();
+            runtime.spawn(async move {
+                let mut app_state = state.lock().await;
+                let start_ts = app_state.playback_state.lock().await.start_timestamp;
+                let end_ts = app_state.playback_state.lock().await.end_timestamp;
+
+                if is_start {
+                    app_state
+                        .handle_playback_event(PlaybackEvent::SeekEvent {
+                            timestamp: start_ts,
+                        })
+                        .await;
+                } else {
+                    app_state
+                        .handle_playback_event(PlaybackEvent::SeekEvent { timestamp: end_ts })
+                        .await;
+                }
+                let new_ts = if is_start { start_ts } else { end_ts };
+                let offset = new_ts - start_ts;
+                update_timestamp(ui_weak, new_ts, offset);
+            });
+        });
+    }
+    {}
+    // Tick event which advances playback every 1/FPS * playback speed secondss
+    {
+        // Run two threads in paralell, one which ticks and one which updates the UI.
+        let (timestamp_tx, mut timestamp_rx) = tokio::sync::watch::channel((0u64, 0u64));
+
+        // Forward timestamps to the Slint event loop
+        let ui_weak = ui.as_weak();
+        runtime.spawn(async move {
+            while timestamp_rx.changed().await.is_ok() {
+                let (new_ts, offset) = *timestamp_rx.borrow_and_update();
+                let ui_weak = ui_weak.clone();
+                update_timestamp(ui_weak, new_ts, offset);
+            }
+        });
+
+        // Start tick thread, this idles when the playback state is not Play
+        let state = Arc::clone(&state);
+        runtime.spawn(async move {
+            let playback = Arc::clone(&state.lock().await.playback_state);
+            Playback::tick(playback, timestamp_tx).await;
         });
     }
 }
@@ -180,11 +308,24 @@ async fn pick_and_open_file(
 
     let file_data_table = decoder.file_data_table.clone();
 
-    state
-        .lock()
-        .expect("lock failed")
-        .set_file_state(*decoder)
-        .await;
+    state.lock().await.set_file_state(*decoder).await;
 
     Ok(Some((path, metadata, file_data_table)))
+}
+
+fn update_timestamp(ui_weak: slint::Weak<AppWindow>, timestamp: u64, offset: u64) {
+    slint::invoke_from_event_loop(move || {
+        if let Some(ui) = ui_weak.upgrade() {
+            let iso_formatted = DateTime::from_timestamp_micros(timestamp as i64)
+                .unwrap()
+                .to_rfc3339();
+            println!("timestamp: {}", timestamp);
+            println!("iso_formatted: {}", iso_formatted);
+            println!("timestamp_s: {}", timestamp as f32 / 1e6);
+
+            ui.set_current_timestamp(timestamp as i32);
+            ui.set_current_timestamp_formatted((&iso_formatted).into());
+            ui.set_offset_s(offset as f32 / 1e6);
+        }
+    });
 }

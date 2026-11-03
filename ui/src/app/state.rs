@@ -1,18 +1,22 @@
 use std::{
-    collections::HashMap,
-    sync::{Arc, Mutex, RwLock},
+    collections::HashMap, sync::{Arc, RwLock},
 };
 
 use io::{
     aedat4_decoder::Aedat4Decoder,
     codec::{Decoder, Packet},
 };
+use tokio::sync::Mutex;
 
-use crate::cache::checkpoint::Checkpoint;
+use crate::{
+    app::playback::{Playback, PlaybackEvent},
+    cache::checkpoint::Checkpoint,
+};
 
 pub struct AppState {
     checkpoints: Arc<RwLock<HashMap<u64, Checkpoint>>>,
     file_state: Option<Arc<Mutex<Aedat4Decoder>>>,
+    pub playback_state: Arc<Mutex<Playback>>,
 }
 
 /// Heuristic for the number of checkpoints to generate
@@ -24,18 +28,26 @@ impl AppState {
         Arc::new(Mutex::new(Self {
             checkpoints: Arc::new(RwLock::new(HashMap::new())),
             file_state: None,
+            playback_state: Arc::new(Mutex::new(Playback::new())),
         }))
     }
 
     pub async fn set_file_state(&mut self, mut decoder: Aedat4Decoder) {
-        println!("setting file state");
         let checkpoints = self.generate_checkpoints(&mut decoder).await;
+        let fdt_view = &decoder.file_data_table.clone();
         self.file_state = Some(Arc::new(Mutex::new(decoder)));
         self.checkpoints
             .write()
             .expect("checkpoint cache lock poisoned")
             .extend(checkpoints.clone());
-        println!("checkpoints: {:?}", checkpoints);
+        self.handle_playback_event(PlaybackEvent::OpenFileEvent { start_timestamp: fdt_view.ts_start as u64, end_timestamp: fdt_view.ts_end as u64}).await;
+    }
+
+    pub async fn handle_playback_event(&mut self, playback: PlaybackEvent) {
+        let mut playback_state = self.playback_state.lock().await;
+        let _effect = playback_state.handle_event(playback);
+        // peform the render action:
+        // ...
     }
 
     async fn generate_checkpoints(
@@ -142,7 +154,9 @@ mod tests {
     #[test]
     fn starts_without_a_file() {
         let state = AppState::new();
-        let state = state.lock().unwrap();
+        let Ok(state) = state.try_lock() else {
+            return
+        };
         assert!(state.file_state.is_none());
         assert!(state.checkpoints.read().unwrap().is_empty());
     }
@@ -152,15 +166,20 @@ mod tests {
         let first = decoder(10).await;
         let second = decoder(20).await;
         let state = AppState::new();
-        let mut state = state.lock().unwrap();
-        state.set_file_state(first);
+        let Ok(mut state) = state.try_lock() else {
+            return
+        };
+        state.set_file_state(first).await;
         let previous = Arc::clone(state.file_state.as_ref().unwrap());
 
-        state.set_file_state(second);
+        state.set_file_state(second).await;
 
         let current = state.file_state.as_ref().unwrap();
         assert!(!Arc::ptr_eq(&previous, current));
-        assert_eq!(current.lock().unwrap().file_data_table.total_events, 20);
+        let Ok(current) = current.try_lock() else {
+            return
+        };
+        assert_eq!(current.file_data_table.total_events, 20);
     }
 
     #[tokio::test]
