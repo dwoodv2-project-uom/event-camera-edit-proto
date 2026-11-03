@@ -64,8 +64,7 @@ impl AppState {
         let width = metadata.output_modules[0].output_info.size_x.unwrap_or(0);
         let height = metadata.output_modules[0].output_info.size_y.unwrap_or(0);
 
-        let mut zeroes = Vec::new();
-        zeroes.resize(width as usize * height as usize, 0u64);
+        let mut zeroes = vec![0; width as usize * height as usize];
 
         // first checkpoint is at the start of the file, so last_polarity_off/on
         // are all zero

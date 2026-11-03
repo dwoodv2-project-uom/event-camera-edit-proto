@@ -2,7 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 pub mod renderer;
 
-use chrono::{DateTime, offset};
+use chrono::DateTime;
 use renderer::Renderer;
 use slint::{
     ToSharedString,
@@ -10,7 +10,7 @@ use slint::{
 };
 use tokio::sync::Mutex;
 
-use std::{path::PathBuf, sync::Arc, time::SystemTime};
+use std::{path::PathBuf, sync::Arc};
 
 pub mod visualisations;
 use visualisations::timeline;
@@ -153,7 +153,7 @@ fn wire(ui: &AppWindow, state: Arc<Mutex<AppState>>, runtime: Arc<tokio::runtime
                             ui.set_duration(format!("{} s", duration as f64 * 1e-6).into());
                             ui.set_current_timestamp(file_data_table.ts_start as i32);
                             let iso_formatted =
-                                DateTime::from_timestamp_micros(file_data_table.ts_start as i64)
+                                DateTime::from_timestamp_micros(file_data_table.ts_start)
                                     .unwrap()
                                     .to_rfc3339();
                             ui.set_current_timestamp_formatted((&iso_formatted).into());
@@ -302,7 +302,7 @@ async fn pick_and_open_file(
     let decoder = Aedat4
         .open(file)
         .await
-        .map_err(|_err| format!("could not decode file"))?;
+        .map_err(|_err| "could not decode file".to_string())?;
 
     let metadata = decoder.metadata.clone();
 

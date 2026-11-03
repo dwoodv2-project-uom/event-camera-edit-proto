@@ -52,6 +52,12 @@ pub enum PlaybackEffect {
 ///   |  | --EofEvent, PressPauseEvent------------ | |
 ///   |  | ----- SeekEvent ---> [Seek]<--SeekEvent---|
 ///   |-----------StopSeekEvent --|
+impl Default for Playback {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Playback {
     pub fn new() -> Self {
         Self {
