@@ -1,5 +1,6 @@
-use slint::{Image, Rgb8Pixel, SharedPixelBuffer};
+use slint::{Rgb8Pixel, SharedPixelBuffer};
 
+#[derive(Clone, Debug)]
 pub enum DecayMode {
     Linear,
     Exponential,
@@ -9,10 +10,10 @@ pub fn time_surface_at_t(
     width: u32,
     height: u32,
     t: i64,
-    ts_last_array: &[i64],
+    ts_last_array: Vec<u64>,
     mode: DecayMode,
     decay_constant: f64,
-) -> Image {
+) -> SharedPixelBuffer<Rgb8Pixel> {
     assert!(width * height == ts_last_array.len() as u32);
     let mut buffer = SharedPixelBuffer::<Rgb8Pixel>::new(width, height);
     let pixels = buffer.make_mut_slice();
@@ -21,12 +22,12 @@ pub fn time_surface_at_t(
     for y in 0..height {
         for x in 0..width {
             let ts_last = ts_last_array[(y * width + x) as usize];
-            let delta_t = (t - ts_last) as f64;
+            let delta_t = (t - ts_last as i64) as f64;
             let intensity = match mode {
                 // 255 * (1 - k * (delta t))
                 DecayMode::Linear => 255.0 * (1.0 - decay_constant * delta_t),
                 // 255 * (e^(-delta t / decay_constant))
-                DecayMode::Exponential => (-delta_t / decay_constant).exp() * 255.0,
+                DecayMode::Exponential => 255.0 * (-delta_t / decay_constant).exp(),
             }
             .floor()
             .clamp(0.0, 255.0) as u8;
@@ -34,7 +35,7 @@ pub fn time_surface_at_t(
             pixels[(y * width + x) as usize] = Rgb8Pixel::new(intensity, intensity, intensity);
         }
     }
-    Image::from_rgb8(buffer)
+    buffer
 }
 
 #[cfg(test)]
@@ -49,16 +50,13 @@ mod tests {
         let ts_last_array = vec![0; (width * height) as usize];
         let mode = DecayMode::Exponential;
         let decay_constant = 25.0;
-        let image =
-            time_surface_at_t(width, height, t, &ts_last_array, mode, decay_constant).to_rgb8();
+        let buffer = time_surface_at_t(width, height, t, ts_last_array, mode, decay_constant);
+        let image = slint::Image::from_rgb8(buffer.clone());
 
-        assert!(image.is_some());
-
-        let rgba_8 = image.unwrap();
-        assert_eq!(rgba_8.width(), width);
-        assert_eq!(rgba_8.height(), height);
+        assert_eq!(image.size().width, width);
+        assert_eq!(image.size().height, height);
         // should have decayed
-        assert!(rgba_8.as_bytes().iter().all(|&p| p == 0));
+        assert!(buffer.as_bytes().iter().all(|&p| p == 0));
     }
 
     #[test]
@@ -69,16 +67,14 @@ mod tests {
         let ts_last_array = vec![12345677; (width * height) as usize];
         let mode = DecayMode::Exponential;
         let decay_constant = 25.0;
-        let image =
-            time_surface_at_t(width, height, t, &ts_last_array, mode, decay_constant).to_rgb8();
 
-        assert!(image.is_some());
+        let buffer = time_surface_at_t(width, height, t, ts_last_array, mode, decay_constant);
+        let image = slint::Image::from_rgb8(buffer.clone());
 
-        let rgba_8 = image.unwrap();
-        assert_eq!(rgba_8.width(), width);
-        assert_eq!(rgba_8.height(), height);
+        assert_eq!(image.size().width, width);
+        assert_eq!(image.size().height, height);
         // should be relatively bright
-        assert!(rgba_8.as_bytes().iter().all(|&p| {
+        assert!(buffer.as_bytes().iter().all(|&p| {
             p == ((-1.0 / decay_constant).exp() * 255.0)
                 .floor()
                 .clamp(0.0, 255.0) as u8

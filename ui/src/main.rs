@@ -3,14 +3,12 @@
 pub mod renderer;
 
 use chrono::DateTime;
-use renderer::Renderer;
 use slint::{
-    ToSharedString,
-    wgpu_30::{WGPUConfiguration, WGPUSettings, wgpu},
+    ToSharedString, wgpu_30::{WGPUConfiguration, WGPUSettings, wgpu},
 };
-use tokio::sync::Mutex;
+use tokio::{runtime, sync::Mutex};
 
-use std::{path::PathBuf, sync::Arc};
+use std::{path::PathBuf, sync::Arc, time::Instant};
 
 pub mod visualisations;
 use visualisations::timeline;
@@ -25,9 +23,11 @@ use io::{
     codec::{DecoderFactory, VideoMetadata},
 };
 
-use crate::app::playback;
+use crate::{app::{playback, render::{ImageUpdate, RenderTarget::PreviewWindow, Renderer}}, visualisations::time_surface::DecayMode};
 
 use playback::{Playback, PlaybackEvent};
+
+use renderer::Renderer as GPURenderer;
 
 slint::include_modules!();
 
@@ -42,9 +42,10 @@ pub fn main() {
         .require_wgpu_30(WGPUConfiguration::Automatic(wgpu_settings))
         .select()
         .expect("Unable to create backend with WGPU based renderer");
+    let (render_tx, mut render_rx) = tokio::sync::mpsc::channel::<ImageUpdate>(16);
 
     let editor_window = AppWindow::new().expect("failed to create app window");
-    let state = AppState::new();
+    let state = AppState::new(render_tx);
 
     let runtime = Arc::new(
         tokio::runtime::Builder::new_multi_thread()
@@ -53,7 +54,7 @@ pub fn main() {
             .expect("could not create Tokio runtime"),
     );
 
-    wire(&editor_window, state, runtime);
+    wire(&editor_window, state, runtime, render_rx);
 
     let editor_weak = editor_window.as_weak();
     let mut renderer = None;
@@ -64,7 +65,7 @@ pub fn main() {
         .set_rendering_notifier(move |state, graphics_api| match state {
             slint::RenderingState::RenderingSetup => {
                 if let slint::GraphicsAPI::WGPU30 { device, queue, .. } = graphics_api {
-                    renderer = Some(Renderer::new(device, queue));
+                    renderer = Some(GPURenderer::new(device, queue));
                     // Set UI elements in debug menu
                     if let Some(editor_window) = editor_weak.upgrade() {
                         editor_window.set_render_backend("renderer-femtovg-wgpu".into());
@@ -99,7 +100,7 @@ pub fn main() {
 }
 
 /// Wires all callbacks for the UI.
-fn wire(ui: &AppWindow, state: Arc<Mutex<AppState>>, runtime: Arc<tokio::runtime::Runtime>) {
+fn wire(ui: &AppWindow, state: Arc<Mutex<AppState>>, runtime: Arc<tokio::runtime::Runtime>, mut render_rx: tokio::sync::mpsc::Receiver<ImageUpdate>) {
     let ui_weak = ui.as_weak();
     // Timeline rendering
     // TODO: optimise this so on_render_timeline is only called when the timeline data changes (e.g. scale)
@@ -266,6 +267,8 @@ fn wire(ui: &AppWindow, state: Arc<Mutex<AppState>>, runtime: Arc<tokio::runtime
 
         // Forward timestamps to the Slint event loop
         let ui_weak = ui.as_weak();
+        let state = Arc::clone(&state);
+
         runtime.spawn(async move {
             while timestamp_rx.changed().await.is_ok() {
                 let (new_ts, offset) = *timestamp_rx.borrow_and_update();
@@ -275,10 +278,79 @@ fn wire(ui: &AppWindow, state: Arc<Mutex<AppState>>, runtime: Arc<tokio::runtime
         });
 
         // Start tick thread, this idles when the playback state is not Play
-        let state = Arc::clone(&state);
         runtime.spawn(async move {
-            let playback = Arc::clone(&state.lock().await.playback_state);
-            Playback::tick(playback, timestamp_tx).await;
+            let state = Arc::clone(&state);
+            Playback::tick(state.clone(), timestamp_tx.clone()).await;
+        });
+    }
+    // Update decay mode for time surface
+    {
+        let state = Arc::clone(&state);
+        let runtime = Arc::clone(&runtime);
+        ui.on_decay_mode_changed( move |new_decay_mode| {
+            println!("slint callback for decay mode change: {}", new_decay_mode);
+            let state = Arc::clone(&state);
+            let runtime = Arc::clone(&runtime);
+            runtime.spawn(async move {
+                let visualisation = {
+                       let app_state = state.lock().await;
+                       Arc::clone(&app_state.visualisation_state)
+                };
+                match new_decay_mode.as_str() {
+                    "Linear" => {
+                        visualisation.lock().await.set_time_surface_decay_mode(DecayMode::Linear);
+                    }
+                    "Exponential" => {
+                        visualisation.lock().await.set_time_surface_decay_mode(DecayMode::Exponential);
+                    }
+                    _ => {
+                        eprintln!("unknown decay mode: {}", new_decay_mode);
+                    }
+                }
+            });
+        });
+    }
+    // Update decay constant for time surface
+    {
+        let state = Arc::clone(&state);
+        let runtime = Arc::clone(&runtime);
+        ui.on_decay_constant_changed( move |decay_ms| {
+            println!("slint callback for decay constant: {}", decay_ms);
+            let state = Arc::clone(&state);
+            let runtime = Arc::clone(&runtime);
+            runtime.spawn(async move {
+                let visualisation = {
+                       let app_state = state.lock().await;
+                       Arc::clone(&app_state.visualisation_state)
+                };
+                visualisation.lock().await.set_time_surface_decay_constant(decay_ms as f64 * 1e3);
+            });
+        });
+    }
+    // Consumer for render queue which updates the UI
+    // TODO: throttle this a bit so that rendering does not need to occur instantly.
+    {
+        let ui_weak = ui.as_weak();
+        runtime.spawn(async move {
+            let mut last_update = std::time::Instant::now();
+
+            while let Some(image_update) = render_rx.recv().await {
+                let elapsed = last_update.elapsed();
+                println!("time between renders: {:?}, fps: {}", elapsed, 1.0 / elapsed.as_secs_f64());
+                last_update = std::time::Instant::now();
+                match image_update.target {
+                    PreviewWindow => {
+                        let ui_weak = ui_weak.clone();
+                        slint::invoke_from_event_loop(move || {
+                            if let Some(ui) = ui_weak.upgrade() {
+                                ui.set_preview_texture(slint::Image::from_rgb8(
+                                    image_update.texture
+                                ));
+                            }
+                        });
+                    }
+                };
+            };
         });
     }
 }
@@ -319,9 +391,6 @@ fn update_timestamp(ui_weak: slint::Weak<AppWindow>, timestamp: u64, offset: u64
             let iso_formatted = DateTime::from_timestamp_micros(timestamp as i64)
                 .unwrap()
                 .to_rfc3339();
-            println!("timestamp: {}", timestamp);
-            println!("iso_formatted: {}", iso_formatted);
-            println!("timestamp_s: {}", timestamp as f32 / 1e6);
 
             ui.set_current_timestamp(timestamp as i32);
             ui.set_current_timestamp_formatted((&iso_formatted).into());

@@ -4,6 +4,8 @@ use tokio::{
     time::{MissedTickBehavior, interval},
 };
 
+use crate::app::state::AppState;
+
 #[derive(PartialEq, Eq, Debug)]
 pub enum PlaybackStatus {
     NoFile,
@@ -26,6 +28,9 @@ pub enum PlaybackEvent {
     StopSeekEvent,
     SkipForwardEvent,
     SkipBackwardEvent,
+    TickEvent {
+        timestamp: u64,
+    },
 }
 
 #[derive(Debug)]
@@ -98,6 +103,11 @@ impl Playback {
                     timestamp: self.current_timestamp,
                 })
             }
+            PlaybackEvent::TickEvent { timestamp } => {
+                Some(PlaybackEffect::RenderAt {
+                    timestamp: timestamp,
+                })
+            }
             PlaybackEvent::PressPauseEvent => {
                 self.state = PlaybackStatus::Pause;
                 None // stop rendering when paused
@@ -133,7 +143,13 @@ impl Playback {
 
     /// Ticker which activates every frame to advance the timestamp and send it to the UI.
     /// Idles when not playing.
-    pub async fn tick(playback: Arc<Mutex<Self>>, timestamp_tx: watch::Sender<(u64, u64)>) {
+    pub async fn tick(state: Arc<Mutex<AppState>>, timestamp_tx: watch::Sender<(u64, u64)>)  {
+
+        let playback = {
+                let app_state = state.lock().await;
+                Arc::clone(&app_state.playback_state)
+        };
+
         let (period, step) = {
             let playback = playback.lock().await;
             assert!(playback.fps > 0.0, "fps must be greater than 0.0");
@@ -150,24 +166,30 @@ impl Playback {
         loop {
             ticker.tick().await;
 
-            let timestamp = {
+            let mut app_state = state.lock().await;
+
+            let (timestamp, event) = {
                 let mut playback = playback.lock().await;
                 if playback.state != PlaybackStatus::Play {
-                    None
+                    continue;
+                }
+                let next = playback.current_timestamp + step;
+                if next >= playback.end_timestamp {
+                    (None, PlaybackEvent::EofEvent)
                 } else {
-                    let next = playback.current_timestamp + step;
-                    if next >= playback.end_timestamp {
-                        playback.handle_event(PlaybackEvent::EofEvent);
-                    } else {
-                        playback.current_timestamp = next;
-                    }
-                    Some(playback.current_timestamp)
+                    playback.current_timestamp = next;
+                    (Some(next), PlaybackEvent::TickEvent { timestamp: next })
                 }
             };
 
+            // handle the effect caused by the tick
+            app_state.handle_playback_event(event).await;
+
+            // send updated timestamp/offset to ui
+            let playback = playback.lock().await;
+
             let offset = {
                 if let Some(timestamp) = timestamp {
-                    let playback = playback.lock().await;
                     Some(timestamp.saturating_sub(playback.start_timestamp))
                 } else {
                     None

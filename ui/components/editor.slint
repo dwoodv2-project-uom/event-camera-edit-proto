@@ -10,8 +10,8 @@ import { Timeline } from "timeline.slint";
 
 export component AppWindow inherits Window {
     default-font-size: 10pt;
-    preferred-width: 1920px;
-    preferred-height: 1080px;
+    //-width: 1920px;
+    //preferred-height: 1080px;
 
     in property <image> texture;
     in property <string> render_backend;
@@ -27,10 +27,15 @@ export component AppWindow inherits Window {
     in property <int> current_timestamp: 0;
     in property <string> current_timestamp_formatted;
     in property <float> offset_s;
+    in property <int> preview_width;
+    in property <int> preview_height;
+    in property <image> preview_texture  <=>  preview_canvas.source;
 
     callback open_file();
 
     pure callback render_timeline(float, float) -> image;
+
+    callback decay_mode_changed(string);
 
     callback pause_play(is_paused: bool);
 
@@ -39,6 +44,8 @@ export component AppWindow inherits Window {
     callback skip_backward();
 
     callback skip_start_end(is_start: bool);
+
+    callback decay_constant_changed(decay_ms: int);
 
     debug_menu := DebugPopup {
         texture: root.texture;
@@ -81,8 +88,8 @@ export component AppWindow inherits Window {
         padding: 5px;
         flex-direction: column;
 
-        property <int> acc: 0;
-        property <int> acc_decay: 0;
+        property <int> decay_constant: 50;
+        property <string> decay_type: "Linear";
         property <int> ts_current: 0;
         property <string> pause_play_icon: "▶︎";
 
@@ -91,13 +98,11 @@ export component AppWindow inherits Window {
             width: 100%;
             spacing: 8px;
             flex-direction: row;
-            // Preview window with tiling functionality
-            Rectangle {
-                width: 80%;
-                background: red;
-                Text {
-                    text: "TILING PREVIEW WINDOW";
-                }
+
+            // Preview window
+            preview_window := Rectangle {
+                min-width: 200px;
+                preview_canvas := Image { }
             }
 
             Rectangle {
@@ -167,21 +172,22 @@ export component AppWindow inherits Window {
 
                     HorizontalLayout {
                         Text {
-                            text: "Accumulation time: ";
+                            text: "Decay constant: ";
                         }
 
                         Slider {
-                            minimum: 0;
-                            maximum: 100;
-                            value: acc;
+                            minimum: 1;
+                            maximum: 200;
+                            value: decay_constant;
                             changed(value) => {
-                                acc = value;
+                                decay_constant = value;
+                                root.decay_constant_changed(value)
                             }
                         }
 
                         TextInput {
                             input-type: number;
-                            text: acc;
+                            text: decay_constant;
                         }
 
                         Text {
@@ -195,8 +201,11 @@ export component AppWindow inherits Window {
                         }
 
                         ComboBox {
-                            model: ["Linear", "Exponential"];
-                            current-value: "Linear";
+                            model: ["Exponential", "Linear"];
+                            current-value: "Exponential";
+                            selected(current_value) => {
+                                root.decay_mode_changed(current_value);
+                            }
                         }
                     }
 
