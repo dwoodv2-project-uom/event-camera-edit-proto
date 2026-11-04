@@ -1,5 +1,7 @@
 use std::error::Error as _;
 use std::io::{ErrorKind, Read as _, SeekFrom};
+use regex::Regex;
+
 
 use async_trait::async_trait;
 ///
@@ -234,11 +236,15 @@ async fn read_packet(
     }
 }
 
+/// Returns true if the node is the root output node.
+/// An output node ends with outInfo/ and ends with a number and (possibly a) slash.
 fn is_root_output_node(attrs: Vec<OwnedAttribute>) -> bool {
     attrs.iter().any(|a| {
+        // use regex to match outInfo/ followed by a number and (possibly a) slash
+        // its slow but it works :|
+        let output_node_pattern = Regex::new("(?m)(outInfo\\/\\d+\\/?$)").unwrap();
         a.name.local_name == "path"
-            && a.value.starts_with("/mainloop/Recorder/outInfo")
-            && !a.value.ends_with("info/")
+            && output_node_pattern.is_match(&a.value)
     })
 }
 
@@ -362,6 +368,9 @@ impl DecoderFactory for Aedat4 {
                         Err(_) => {}
                         _ => {}
                     }
+                }
+                if current_attr.is_some() {
+                    module_vector.push(current_module);
                 }
                 let compression = iohe_root.compression();
                 Some(VideoMetadata {

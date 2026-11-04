@@ -2611,6 +2611,7 @@ dependencies = [
  "clap",
  "flatbuffers",
  "lz4",
+ "regex",
  "tokio",
  "walkdir",
  "xml",
