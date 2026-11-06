@@ -11,12 +11,12 @@ use io::{
 use tokio::sync::{Mutex};
 
 use crate::{
-    app::{playback::{Playback, PlaybackEffect, PlaybackEvent}, render::{ImageUpdate, VisualisationState, Renderer}}, cache::checkpoint::Checkpoint,
+    app::{playback::{Playback, PlaybackEffect, PlaybackEvent}, render::{ImageUpdate, Renderer, VisualisationMode, VisualisationState}}, cache::checkpoint::Checkpoint,
 };
 
 pub struct AppState {
     checkpoints: Arc<RwLock<HashMap<u64, Checkpoint>>>,
-    file_state: Option<Arc<Mutex<Aedat4Decoder>>>,
+    pub file_state: Option<Arc<Mutex<Aedat4Decoder>>>,
     pub playback_state: Arc<Mutex<Playback>>,
     pub visualisation_state: Arc<Mutex<VisualisationState>>,
     pub render_tx: tokio::sync::mpsc::Sender<ImageUpdate>,
@@ -82,7 +82,7 @@ impl AppState {
                 };
 
                 let visualisation = self.visualisation_state.lock().await;
-                visualisation.render(timestamp, width, height, self).await;
+                visualisation.render(VisualisationMode::TimeSurface, timestamp, width, height, self).await;
 
                 None
             }

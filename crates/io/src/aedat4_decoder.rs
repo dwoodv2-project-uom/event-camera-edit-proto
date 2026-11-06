@@ -33,15 +33,15 @@ pub struct Aedat4;
 pub struct PacketMetadata {
     header: PacketHeader,
     byte_offset: i64,
-    num_elements: i64,
-    ts_start: i64,
+    pub num_elements: i64,
+    pub ts_start: i64,
     ts_end: i64,
 }
 
 #[derive(Debug, Clone)]
 pub struct FileDataTableEntry {
-    packet_type: PacketType,
-    metadata: PacketMetadata,
+    pub packet_type: PacketType,
+    pub metadata: PacketMetadata,
 }
 
 #[derive(Debug, Clone)]

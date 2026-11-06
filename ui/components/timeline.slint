@@ -1,19 +1,18 @@
 export component Timeline {
     width: 100%;
     height: 100%;
+    in property <image> timeline_svg  <=>  timeline_canvas.source;
 
-    pure callback on_render_timeline(/* width */ float, /* height */ float) -> image;
 
     Rectangle {
         width: 100%;
         height: 100%;
 
-        Image {
+        timeline_canvas := Image {
             width: 100%;
             height: 100%;
             preferred-width: 0px;
             preferred-height: 0px;
-            source: root.on_render_timeline(root.width / 1px, root.height / 1px);
         }
     }
 }

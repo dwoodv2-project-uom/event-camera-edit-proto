@@ -4,7 +4,8 @@ pub mod renderer;
 
 use chrono::DateTime;
 use slint::{
-    ToSharedString, wgpu_30::{WGPUConfiguration, WGPUSettings, wgpu},
+    Image, ToSharedString,
+    wgpu_30::{WGPUConfiguration, WGPUSettings, wgpu},
 };
 use tokio::{runtime, sync::Mutex};
 
@@ -23,7 +24,17 @@ use io::{
     codec::{DecoderFactory, VideoMetadata},
 };
 
-use crate::{app::{playback, render::{ImageUpdate, RenderTarget::PreviewWindow, Renderer}}, visualisations::time_surface::DecayMode};
+use crate::{
+    app::{
+        playback,
+        render::{
+            ImageUpdate,
+            RenderTarget::{self, PreviewWindow},
+            Renderer, VisualisationMode,
+        },
+    },
+    visualisations::time_surface::DecayMode,
+};
 
 use playback::{Playback, PlaybackEvent};
 
@@ -100,19 +111,13 @@ pub fn main() {
 }
 
 /// Wires all callbacks for the UI.
-fn wire(ui: &AppWindow, state: Arc<Mutex<AppState>>, runtime: Arc<tokio::runtime::Runtime>, mut render_rx: tokio::sync::mpsc::Receiver<ImageUpdate>) {
+fn wire(
+    ui: &AppWindow,
+    state: Arc<Mutex<AppState>>,
+    runtime: Arc<tokio::runtime::Runtime>,
+    mut render_rx: tokio::sync::mpsc::Receiver<ImageUpdate>,
+) {
     let ui_weak = ui.as_weak();
-    // Timeline rendering
-    // TODO: optimise this so on_render_timeline is only called when the timeline data changes (e.g. scale)
-    {
-        ui.on_render_timeline(|width, height| {
-            if width < 100.0 || height < 100.0 {
-                return slint::Image::default();
-            }
-
-            timeline::render(width as u32, height as u32)
-        });
-    }
     // File opening logic
     {
         let state_for_open_file = Arc::clone(&state);
@@ -131,7 +136,7 @@ fn wire(ui: &AppWindow, state: Arc<Mutex<AppState>>, runtime: Arc<tokio::runtime
 
             let ui_weak = ui.as_weak();
             let handle = std::thread::spawn(move || {
-                let result = runtime.block_on(pick_and_open_file(state));
+                let result = runtime.block_on(pick_and_open_file(Arc::clone(&state)));
                 let _ = ui_weak.upgrade_in_event_loop(move |ui| {
                     ui.set_file_loading(false);
                     match result {
@@ -159,6 +164,15 @@ fn wire(ui: &AppWindow, state: Arc<Mutex<AppState>>, runtime: Arc<tokio::runtime
                                     .to_rfc3339();
                             ui.set_current_timestamp_formatted((&iso_formatted).into());
                             ui.set_offset_s(0.0);
+                            runtime.block_on(async {
+                                let app_state = state.lock().await;
+                                let visualisation_state =
+                                    Arc::clone(&app_state.visualisation_state);
+                                let visualisation_state = visualisation_state.lock().await;
+                                visualisation_state
+                                    .render(VisualisationMode::Timeline, 0, 1000, 300, &app_state)
+                                    .await;
+                            });
                         }
                         Ok(None) => {}
                         Err(error) => ui.set_file_error(error.into()),
@@ -287,21 +301,27 @@ fn wire(ui: &AppWindow, state: Arc<Mutex<AppState>>, runtime: Arc<tokio::runtime
     {
         let state = Arc::clone(&state);
         let runtime = Arc::clone(&runtime);
-        ui.on_decay_mode_changed( move |new_decay_mode| {
+        ui.on_decay_mode_changed(move |new_decay_mode| {
             println!("slint callback for decay mode change: {}", new_decay_mode);
             let state = Arc::clone(&state);
             let runtime = Arc::clone(&runtime);
             runtime.spawn(async move {
                 let visualisation = {
-                       let app_state = state.lock().await;
-                       Arc::clone(&app_state.visualisation_state)
+                    let app_state = state.lock().await;
+                    Arc::clone(&app_state.visualisation_state)
                 };
                 match new_decay_mode.as_str() {
                     "Linear" => {
-                        visualisation.lock().await.set_time_surface_decay_mode(DecayMode::Linear);
+                        visualisation
+                            .lock()
+                            .await
+                            .set_time_surface_decay_mode(DecayMode::Linear);
                     }
                     "Exponential" => {
-                        visualisation.lock().await.set_time_surface_decay_mode(DecayMode::Exponential);
+                        visualisation
+                            .lock()
+                            .await
+                            .set_time_surface_decay_mode(DecayMode::Exponential);
                     }
                     _ => {
                         eprintln!("unknown decay mode: {}", new_decay_mode);
@@ -314,16 +334,19 @@ fn wire(ui: &AppWindow, state: Arc<Mutex<AppState>>, runtime: Arc<tokio::runtime
     {
         let state = Arc::clone(&state);
         let runtime = Arc::clone(&runtime);
-        ui.on_decay_constant_changed( move |decay_ms| {
+        ui.on_decay_constant_changed(move |decay_ms| {
             println!("slint callback for decay constant: {}", decay_ms);
             let state = Arc::clone(&state);
             let runtime = Arc::clone(&runtime);
             runtime.spawn(async move {
                 let visualisation = {
-                       let app_state = state.lock().await;
-                       Arc::clone(&app_state.visualisation_state)
+                    let app_state = state.lock().await;
+                    Arc::clone(&app_state.visualisation_state)
                 };
-                visualisation.lock().await.set_time_surface_decay_constant(decay_ms as f64 * 1e3);
+                visualisation
+                    .lock()
+                    .await
+                    .set_time_surface_decay_constant(decay_ms as f64 * 1e3);
             });
         });
     }
@@ -336,21 +359,36 @@ fn wire(ui: &AppWindow, state: Arc<Mutex<AppState>>, runtime: Arc<tokio::runtime
 
             while let Some(image_update) = render_rx.recv().await {
                 let elapsed = last_update.elapsed();
-                println!("time between renders: {:?}, fps: {}", elapsed, 1.0 / elapsed.as_secs_f64());
+                println!(
+                    "time between renders: {:?}, fps: {}",
+                    elapsed,
+                    1.0 / elapsed.as_secs_f64()
+                );
                 last_update = std::time::Instant::now();
                 match image_update.target {
-                    PreviewWindow => {
+                    RenderTarget::PreviewWindow => {
                         let ui_weak = ui_weak.clone();
                         slint::invoke_from_event_loop(move || {
                             if let Some(ui) = ui_weak.upgrade() {
-                                ui.set_preview_texture(slint::Image::from_rgb8(
-                                    image_update.texture
-                                ));
+                                let texture = image_update.texture.unwrap();
+                                ui.set_preview_texture(slint::Image::from_rgb8(texture));
+                            }
+                        });
+                    }
+                    RenderTarget::Timeline => {
+                        let ui_weak = ui_weak.clone();
+                        slint::invoke_from_event_loop(move || {
+                            if let Some(ui) = ui_weak.upgrade() {
+                                println!("rendering timeline");
+                                let svg = image_update.svg.unwrap();
+                                let image =
+                                    slint::Image::load_from_svg_data(svg.as_bytes()).unwrap();
+                                ui.set_timeline_svg(image);
                             }
                         });
                     }
                 };
-            };
+            }
         });
     }
 }
