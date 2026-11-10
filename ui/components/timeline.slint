@@ -3,6 +3,14 @@ export component Timeline {
     height: 100%;
     in property <image> timeline_svg  <=>  timeline_canvas.source;
 
+    callback resized(length, length);
+
+    changed width => {
+        root.resized(self.width, self.height);
+    }
+    changed height => {
+        root.resized(self.width, self.height);
+    }
 
     Rectangle {
         width: 100%;
@@ -13,6 +21,7 @@ export component Timeline {
             height: 100%;
             preferred-width: 0px;
             preferred-height: 0px;
+            image-fit: contain;
         }
     }
 }

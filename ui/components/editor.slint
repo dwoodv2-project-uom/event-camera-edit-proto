@@ -31,10 +31,14 @@ export component AppWindow inherits Window {
     in property <int> preview_height;
     in property <image> preview_texture  <=>  preview_canvas.source;
     in property <image> timeline_svg  <=>  timeline.timeline_svg;
+    out property <length> timeline_width: timeline.width;
+    out property <length> timeline_height: timeline.height;
 
     callback open_file();
 
     pure callback render_timeline(float, float) -> image;
+
+    callback timeline_resized(length, length);
 
     callback decay_mode_changed(string);
 
@@ -99,6 +103,7 @@ export component AppWindow inherits Window {
             width: 100%;
             spacing: 8px;
             flex-direction: row;
+            alignment: space-between;
 
             // Preview window
             preview_window := Rectangle {
@@ -316,6 +321,9 @@ export component AppWindow inherits Window {
         timeline := Timeline {
             width: 100%;
             height: 28%;
+            resized(width, height) => {
+                root.timeline_resized(width, height);
+            }
         }
     }
 }

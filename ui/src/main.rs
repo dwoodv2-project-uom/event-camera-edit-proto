@@ -164,13 +164,21 @@ fn wire(
                                     .to_rfc3339();
                             ui.set_current_timestamp_formatted((&iso_formatted).into());
                             ui.set_offset_s(0.0);
+                            let timeline_width = ui.get_timeline_width().max(1.0) as u32;
+                            let timeline_height = ui.get_timeline_height().max(1.0) as u32;
                             runtime.block_on(async {
                                 let app_state = state.lock().await;
                                 let visualisation_state =
                                     Arc::clone(&app_state.visualisation_state);
                                 let visualisation_state = visualisation_state.lock().await;
                                 visualisation_state
-                                    .render(VisualisationMode::Timeline, 0, 1000, 300, &app_state)
+                                    .render(
+                                        VisualisationMode::Timeline,
+                                        0,
+                                        timeline_width,
+                                        timeline_height,
+                                        &app_state,
+                                    )
                                     .await;
                             });
                         }
@@ -348,6 +356,35 @@ fn wire(
                     .await
                     .set_time_surface_decay_constant(decay_ms as f64 * 1e3);
             });
+        });
+    }
+   // Thread which handles timeline resizing, calling the timeline render backend to redraw the timeline.
+    {
+        let state = Arc::clone(&state);
+        let (size_tx, mut size_rx) = tokio::sync::watch::channel((0u32, 0u32));
+
+        ui.on_timeline_resized(move |width, height| {
+            let _ = size_tx.send((width.round() as u32, height.round() as u32));
+        });
+
+        runtime.spawn(async move {
+            while size_rx.changed().await.is_ok() {
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await; // debounce resizes to prevent rapid rendering
+                let (width, height) = *size_rx.borrow_and_update();
+                if width < 50 || height < 50 {
+                    continue;
+                }
+                let app_state = state.lock().await;
+                if app_state.file_state.is_none() {
+                    continue;
+                }
+                let visualisation = Arc::clone(&app_state.visualisation_state);
+                visualisation
+                    .lock()
+                    .await
+                    .render(VisualisationMode::Timeline, 0, width, height, &app_state)
+                    .await;
+            }
         });
     }
     // Consumer for render queue which updates the UI
