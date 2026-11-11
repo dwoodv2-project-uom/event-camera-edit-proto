@@ -19,7 +19,7 @@ pub fn dummy_data(limit: i32) -> Vec<(i32, i32)> {
 
 pub fn render(width: u32, height: u32, y_max: i32, histogram: &[i32]) -> String {
     let x_max = histogram.len().max(1) as i64 * BUCKET_SIZE;
-    let y_max = y_max.max(1);
+    let y_max = i64::from(y_max.max(0)) + 1;
     let mut svg_buffer = String::new();
     println!("rendering timeline");
 
@@ -36,7 +36,7 @@ pub fn render(width: u32, height: u32, y_max: i32, histogram: &[i32]) -> String 
             .set_label_area_size(LabelAreaPosition::Bottom, 8)
             //.x_label_area_size(30)
             .y_label_area_size(60)
-            .build_cartesian_2d(0i64..x_max, 0..y_max)
+            .build_cartesian_2d(0i64..x_max, 0i64..y_max)
             .expect("failed to build chart");
 
         chart
@@ -60,7 +60,7 @@ pub fn render(width: u32, height: u32, y_max: i32, histogram: &[i32]) -> String 
         chart
             .draw_series(histogram.iter().enumerate().map(|(index, &count)| {
                 let start = index as i64 * BUCKET_SIZE;
-                Rectangle::new([(start, 0), (start + BUCKET_SIZE, count)], BLUE.filled())
+                Rectangle::new([(start, 0i64), (start + BUCKET_SIZE, i64::from(count))], BLUE.filled())
             }))
             .expect("failed to draw timeline");
 
