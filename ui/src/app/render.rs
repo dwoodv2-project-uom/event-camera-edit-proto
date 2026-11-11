@@ -117,27 +117,12 @@ impl Renderer for VisualisationState {
             }
             VisualisationMode::Timeline => {
                 println!("rendering timeline");
-                let file_data_table = state.file_state.as_ref().unwrap().lock().await.file_data_table.clone();
-
-                let mut event_freq = Vec::<(i32, i32)>::new();
-                let mut y_min = i32::MAX;
-                let mut y_max = 0;
-                let x_max = file_data_table.ts_end as i32 - file_data_table.ts_start as i32;
-                let ts_start = file_data_table.ts_start as i32;
-
-                for packet in file_data_table.events {
-                    let ts = packet.metadata.ts_start;
-                    let offset = ts as i32 - ts_start;
-                    let count = packet.metadata.num_elements as i32;
-                    if count > y_max {
-                        y_max = count;
-                    } else if count < y_min {
-                        y_min = count;
-                    }
-                    event_freq.push((offset as i32, count as i32));
-                }
-
-                let rendered_svg = timeline::render(width, height, x_max, y_max, y_min, event_freq);
+                let rendered_svg = timeline::render(
+                    width,
+                    height,
+                    state.max_event_count,
+                    &state.event_histogram,
+                );
                 state.render_tx.send( ImageUpdate { target: RenderTarget::Timeline, svg: Some(rendered_svg), texture: None }).await.expect("failed to send rendered image");
             }
         }

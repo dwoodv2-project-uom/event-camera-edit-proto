@@ -1,10 +1,12 @@
 use std::time::Duration;
 
-use chrono::DateTime;
+
 use plotters::prelude::*;
 use rand::{RngExt, SeedableRng};
-use slint::Image;
-use tokio::time::error::Elapsed;
+
+
+// Bucket size for the event frequency histogram
+pub const BUCKET_SIZE: i64 = 1_000; // 1 ms
 
 pub fn dummy_data(limit: i32) -> Vec<(i32, i32)> {
     let mut data = Vec::new();
@@ -15,7 +17,9 @@ pub fn dummy_data(limit: i32) -> Vec<(i32, i32)> {
     data
 }
 
-pub fn render(width: u32, height: u32, x_max: i32, y_max: i32, y_min: i32, data: Vec<(i32, i32)>) -> String {
+pub fn render(width: u32, height: u32, y_max: i32, histogram: &[i32]) -> String {
+    let x_max = histogram.len().max(1) as i64 * BUCKET_SIZE;
+    let y_max = y_max.max(1);
     let mut svg_buffer = String::new();
     println!("rendering timeline");
 
@@ -32,12 +36,12 @@ pub fn render(width: u32, height: u32, x_max: i32, y_max: i32, y_min: i32, data:
             .set_label_area_size(LabelAreaPosition::Bottom, 8)
             //.x_label_area_size(30)
             .y_label_area_size(60)
-            .build_cartesian_2d(0..x_max, y_min..y_max)
+            .build_cartesian_2d(0i64..x_max, 0..y_max)
             .expect("failed to build chart");
 
         chart
             .configure_mesh()
-            .y_desc("Events")
+            .disable_y_axis()
             .x_label_formatter(&|x| {
                 let duration = Duration::from_micros(*x as u64);
 
@@ -54,7 +58,10 @@ pub fn render(width: u32, height: u32, x_max: i32, y_max: i32, y_min: i32, data:
             .expect("failed to draw chart axes");
 
         chart
-            .draw_series(LineSeries::new(data, &BLUE))
+            .draw_series(histogram.iter().enumerate().map(|(index, &count)| {
+                let start = index as i64 * BUCKET_SIZE;
+                Rectangle::new([(start, 0), (start + BUCKET_SIZE, count)], BLUE.filled())
+            }))
             .expect("failed to draw timeline");
 
         drawing_area.present().expect("failed to present chart");

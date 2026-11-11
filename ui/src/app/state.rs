@@ -11,7 +11,7 @@ use io::{
 use tokio::sync::{Mutex};
 
 use crate::{
-    app::{playback::{Playback, PlaybackEffect, PlaybackEvent}, render::{ImageUpdate, Renderer, VisualisationMode, VisualisationState}}, cache::checkpoint::Checkpoint,
+    app::{playback::{Playback, PlaybackEffect, PlaybackEvent}, render::{ImageUpdate, Renderer, VisualisationMode, VisualisationState}}, cache::checkpoint::Checkpoint, visualisations::timeline::BUCKET_SIZE,
 };
 
 pub struct AppState {
@@ -20,11 +20,17 @@ pub struct AppState {
     pub playback_state: Arc<Mutex<Playback>>,
     pub visualisation_state: Arc<Mutex<VisualisationState>>,
     pub render_tx: tokio::sync::mpsc::Sender<ImageUpdate>,
+    /// Histogram of event frequencies, used for visualisation
+    /// Index 0 represents the number of events in the first bucket (0-BUCKET_SIZE), etc.
+    pub event_histogram: Vec<i32>,
+    /// y_max for the histogram, used to scale the visualisation
+    pub max_event_count: i32,
 }
 
 /// Heuristic for the number of checkpoints to generate
 /// This will be varied to find the optimal number of checkpoints
 const NUM_CHECKPOINTS: i64 = 20;
+
 
 impl AppState {
     pub fn new(tx: tokio::sync::mpsc::Sender<ImageUpdate>) -> Arc<Mutex<Self>> {
@@ -34,11 +40,13 @@ impl AppState {
             playback_state: Arc::new(Mutex::new(Playback::new())),
             visualisation_state: Arc::new(Mutex::new(VisualisationState::default())),
             render_tx: tx,
+            event_histogram: Vec::new(),
+            max_event_count: 0,
         }))
     }
 
     pub async fn set_file_state(&mut self, mut decoder: Aedat4Decoder) {
-        let checkpoints = self.generate_checkpoints(&mut decoder).await;
+        let checkpoints = self.preprocess_file(&mut decoder).await;
         let fdt_view = &decoder.file_data_table.clone();
         self.file_state = Some(Arc::new(Mutex::new(decoder)));
         self.checkpoints
@@ -90,13 +98,14 @@ impl AppState {
         }
     }
 
-    async fn generate_checkpoints(
+    async fn preprocess_file(
         &mut self,
         decoder: &mut Aedat4Decoder,
     ) -> Vec<(u64, Checkpoint)> {
         let mut checkpoints = Vec::new();
         let min_ts = decoder.file_data_table.ts_start as u64;
         let max_ts = decoder.file_data_table.ts_end as u64;
+        let mut y_max = 0;
         // TODO: find out better partitioning methods
         // E.g. via event density
         let step = (max_ts - min_ts) / NUM_CHECKPOINTS as u64;
@@ -115,6 +124,10 @@ impl AppState {
                 last_polarity_on: zeroes.clone(),
             },
         ));
+
+        let number_of_buckets = ((max_ts - min_ts) as f64 / BUCKET_SIZE as f64).ceil() as i32;
+        let mut event_histogram: Vec<i32> = vec![0; number_of_buckets as usize];
+
 
         for i in 1..NUM_CHECKPOINTS {
             let ts = min_ts + step * i as u64;
@@ -147,6 +160,10 @@ impl AppState {
                     } else {
                         last_pol_offs[idx] = event.ts() as u64;
                     }
+                    let offset = event.ts() - min_ts as i64;
+                    let bucket_index = (offset as f64 / BUCKET_SIZE as f64).floor() as usize;
+                    event_histogram[bucket_index] += 1;
+                    y_max = y_max.max(event_histogram[bucket_index]);
                 }
             }
             checkpoints.push((
@@ -157,6 +174,8 @@ impl AppState {
                 },
             ));
         }
+        self.event_histogram = event_histogram.clone();
+        self.max_event_count = y_max;
         checkpoints
     }
 
