@@ -1,6 +1,6 @@
 use slint::{Rgb8Pixel, SharedPixelBuffer};
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub enum DecayMode {
     Linear,
     Exponential,

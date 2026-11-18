@@ -9,7 +9,7 @@ edition = "2024"
 io = { path = "../crates/io" }
 chrono = "0.4.45"
 rfd = "0.15"
-tokio = { version = "1", features = ["full"] }
+tokio = { workspace = true }
 plotters = "0.3.7"
 rand = "0.10.3"
 slint = { version = "1.18.1", features = [
@@ -27,3 +27,7 @@ slint-build = "1.18.1"
 [profile.release]
 codegen-units = 1
 lto = true
+
+[features]
+# expose additional methods only to be used for benchmark code.
+benchmarking = []

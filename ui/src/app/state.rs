@@ -15,6 +15,10 @@ use crate::{
 };
 
 pub struct AppState {
+    // expose checkpoints for benchmarking, should not be publicly accessed under any other circumstances
+    #[cfg(feature = "benchmarking")]
+    pub checkpoints: Arc<RwLock<HashMap<u64, Checkpoint>>>,
+    #[cfg(not(feature = "benchmarking"))]
     checkpoints: Arc<RwLock<HashMap<u64, Checkpoint>>>,
     pub file_state: Option<Arc<Mutex<Aedat4Decoder>>>,
     pub playback_state: Arc<Mutex<Playback>>,

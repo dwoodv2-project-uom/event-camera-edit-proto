@@ -1,0 +1,19 @@
+[package]
+name = "event-camera-editor-benches"
+version = "0.1.0"
+edition = "2024"
+
+[dev-dependencies]
+criterion = { version = "0.8.2", features=["html_reports"] }
+
+[dependencies]
+# expose benchmarking feature flag so we can gain access to private methods/parameters, benchmark specific functions.
+event_camera_editor_ui = { path = "../ui", features = ["benchmarking"] }
+io = { path = "../crates/io" }
+itertools = "0.15.0"
+tokio = { workspace = true }
+
+[[bench]]
+name = "bench_timesurface"
+path = "visualisations/bench_timesurface.rs"
+harness = false
