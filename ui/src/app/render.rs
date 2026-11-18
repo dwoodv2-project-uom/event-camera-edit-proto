@@ -86,34 +86,82 @@ impl Renderer for VisualisationState {
                     state.render_tx.send(ImageUpdate { target: RenderTarget::PreviewWindow, texture: Some(black_image), svg: None }).await.unwrap();
                     return;
                 }
-                // Using cache, we apply the packets from the left most checkpoint up until the timestamp
+                #[cfg(not(feature = "benchmarking"))]
+                {
+                    // Using cache, we apply the packets from the left most checkpoint up until the timestamp
+                    let (checkpoint_ts, left_most_checkpoint) = state.get_left_most_checkpoint(timestamp).await;
 
-                let (checkpoint_ts, left_most_checkpoint) = state.get_left_most_checkpoint(timestamp).await;
+                    let mut last_pol_on = left_most_checkpoint.last_polarity_on.clone();
 
-                let mut last_pol_on = left_most_checkpoint.last_polarity_on.clone();
+                    let decoder = state.get_decoder().await.expect("no decoder available, is the file open?");
+                    let mut decoder = decoder.lock().await;
 
-                let decoder = state.get_decoder().await.expect("no decoder available, is the file open?");
-                let mut decoder = decoder.lock().await;
+                    let packets_from_check_to_ts = decoder.packets_by_ts_range(checkpoint_ts as i64, timestamp as i64).await.unwrap().unwrap();
+                    let event_packets = packets_from_check_to_ts.into_iter().filter_map(|packet| match packet {
+                        Packet::EventPacket(content) => Some(content),
+                        _ => None,
+                    });
 
-                let packets_from_check_to_ts = decoder.packets_by_ts_range(checkpoint_ts as i64, timestamp as i64).await.unwrap().unwrap();
-                let event_packets = packets_from_check_to_ts.into_iter().filter_map(|packet| match packet {
-                    Packet::EventPacket(content) => Some(content),
-                    _ => None,
-                });
-
-                for event_packet in event_packets {
-                    let events = event_packet.as_events().unwrap_or_default();
-                    for event in events.iter().flatten() {
-                        let idx = (event.y() as usize) * width as usize + event.x() as usize;
-                        if event.polarity() {
-                            last_pol_on[idx] = event.ts() as u64;
+                    for event_packet in event_packets {
+                        let events = event_packet.as_events().unwrap_or_default();
+                        for event in events.iter().flatten() {
+                            let idx = (event.y() as usize) * width as usize + event.x() as usize;
+                            if event.polarity() {
+                                last_pol_on[idx] = event.ts() as u64;
+                            }
                         }
                     }
+
+                    // Finally, render the time surface and send it to the consumer thread
+                    let rendered_image = time_surface_at_t(width, height, timestamp as i64, last_pol_on.to_vec(), self.params.time_surface_params.decay_mode.clone(), self.params.time_surface_params.decay_constant);
+                    state.render_tx.send( ImageUpdate { target: RenderTarget::PreviewWindow, texture: Some(rendered_image), svg: None }).await.expect("failed to send rendered image");
+                }
+                #[cfg(feature = "benchmarking")]
+                // while benchmarking, checkpoints can be disabled for testing
+                {
+                    let left_most_checkpoint = state.get_left_most_checkpoint(timestamp).await;
+                    let decoder = state.get_decoder().await.expect("no decoder available, is the file open?");
+                    let mut decoder = decoder.lock().await;
+
+                    let (mut last_pol_on, start_ts) = match left_most_checkpoint {
+                        Some((checkpoint_ts, checkpoint)) => (
+                            checkpoint.last_polarity_on.clone(),
+                            checkpoint_ts as i64,
+                        ),
+                        None => {
+                            // With no checkpoint, start from the beginning of the recording.
+                            (
+                                vec![0u64; width as usize * height as usize],
+                                decoder.file_data_table.ts_start,
+                            )
+                        }
+                    };
+
+                    let packets_from_check_to_ts = decoder
+                        .packets_by_ts_range(start_ts, timestamp as i64)
+                        .await
+                        .unwrap()
+                        .unwrap();
+                    let event_packets = packets_from_check_to_ts.into_iter().filter_map(|packet| match packet {
+                        Packet::EventPacket(content) => Some(content),
+                        _ => None,
+                    });
+
+                    for event_packet in event_packets {
+                        let events = event_packet.as_events().unwrap_or_default();
+                        for event in events.iter().flatten() {
+                            let idx = (event.y() as usize) * width as usize + event.x() as usize;
+                            if event.polarity() {
+                                last_pol_on[idx] = event.ts() as u64;
+                            }
+                        }
+                    }
+
+                    // Finally, render the time surface and send it to the consumer thread
+                    let rendered_image = time_surface_at_t(width, height, timestamp as i64, last_pol_on.to_vec(), self.params.time_surface_params.decay_mode.clone(), self.params.time_surface_params.decay_constant);
+                    state.render_tx.send( ImageUpdate { target: RenderTarget::PreviewWindow, texture: Some(rendered_image), svg: None }).await.expect("failed to send rendered image");
                 }
 
-                // Finally, render the time surface and send it to the consumer thread
-                let rendered_image = time_surface_at_t(width, height, timestamp as i64, last_pol_on.to_vec(), self.params.time_surface_params.decay_mode.clone(), self.params.time_surface_params.decay_constant);
-                state.render_tx.send( ImageUpdate { target: RenderTarget::PreviewWindow, texture: Some(rendered_image), svg: None }).await.expect("failed to send rendered image");
             }
             VisualisationMode::Timeline => {
                 println!("rendering timeline");
@@ -128,6 +176,3 @@ impl Renderer for VisualisationState {
         }
     }
 }
-/*
-
-*/

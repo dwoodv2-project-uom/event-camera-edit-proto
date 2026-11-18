@@ -15,7 +15,8 @@ use crate::{
 };
 
 pub struct AppState {
-    // expose checkpoints for benchmarking, should not be publicly accessed under any other circumstances
+    // the normal app always uses checkpoints, but we have the ability to remove them for benchmarking
+    // to compare non-cached and cached performance
     #[cfg(feature = "benchmarking")]
     pub checkpoints: Arc<RwLock<HashMap<u64, Checkpoint>>>,
     #[cfg(not(feature = "benchmarking"))]
@@ -57,6 +58,17 @@ impl AppState {
             .write()
             .expect("checkpoint cache lock poisoned")
             .extend(checkpoints.clone());
+        self.handle_playback_event(PlaybackEvent::OpenFileEvent { start_timestamp: fdt_view.ts_start as u64, end_timestamp: fdt_view.ts_end as u64}).await;
+    }
+
+    #[cfg(feature = "benchmarking")]
+    pub async fn set_file_state_without_checkpoints(&mut self, decoder: Aedat4Decoder) {
+        let fdt_view = &decoder.file_data_table.clone();
+        self.file_state = Some(Arc::new(Mutex::new(decoder)));
+        self.checkpoints
+            .write()
+            .expect("checkpoint cache lock poisoned")
+            .extend(HashMap::new());
         self.handle_playback_event(PlaybackEvent::OpenFileEvent { start_timestamp: fdt_view.ts_start as u64, end_timestamp: fdt_view.ts_end as u64}).await;
     }
 
@@ -184,6 +196,7 @@ impl AppState {
     }
 
     /// Get the leftmost checkpoint for a given timestamp.
+    #[cfg(not(feature = "benchmarking"))]
     pub async fn get_left_most_checkpoint(&self, ts: u64) -> (u64, Checkpoint) {
         let checkpoints = self.checkpoints.read().unwrap();
 
@@ -193,6 +206,22 @@ impl AppState {
             .max_by_key(|(timestamp, _)| *timestamp)
             .map(|(&timestamp, checkpoint)| (timestamp, checkpoint.clone()))
             .unwrap()
+    }
+
+    #[cfg(feature = "benchmarking")]
+    pub async fn get_left_most_checkpoint(&self, ts: u64) -> Option<(u64, Checkpoint)> {
+        let checkpoints = self.checkpoints.read().unwrap();
+
+        if checkpoints.is_empty() {
+            return None
+        }
+
+        Some(checkpoints
+            .iter()
+            .filter(|(timestamp, _)| **timestamp <= ts)
+            .max_by_key(|(timestamp, _)| *timestamp)
+            .map(|(&timestamp, checkpoint)| (timestamp, checkpoint.clone()))
+            .unwrap())
     }
 }
 #[cfg(test)]
