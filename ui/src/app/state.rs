@@ -183,7 +183,7 @@ impl AppState {
                 }
             }
             checkpoints.push((
-                min_ts,
+                ts,
                 Checkpoint {
                     last_polarity_off: last_pol_offs,
                     last_polarity_on: last_pol_ons,
