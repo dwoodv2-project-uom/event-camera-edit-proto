@@ -107,6 +107,7 @@ impl AppState {
 
                 let visualisation = self.visualisation_state.lock().await;
                 visualisation.render(VisualisationMode::TimeSurface, timestamp, width, height, self).await;
+                visualisation.render(VisualisationMode::EventFrame, timestamp, width, height, self).await;
 
                 None
             }

@@ -28,9 +28,7 @@ use crate::{
     app::{
         playback,
         render::{
-            ImageUpdate,
-            RenderTarget::{self, PreviewWindow},
-            Renderer, VisualisationMode,
+            ImageUpdate, RenderTarget, Renderer, VisualisationMode,
         },
     },
     visualisations::time_surface::DecayMode,
@@ -403,7 +401,7 @@ fn wire(
                 );
                 last_update = std::time::Instant::now();
                 match image_update.target {
-                    RenderTarget::PreviewWindow => {
+                    RenderTarget::PreviewWindow(0) => {
                         let ui_weak = ui_weak.clone();
                         slint::invoke_from_event_loop(move || {
                             if let Some(ui) = ui_weak.upgrade() {
@@ -411,6 +409,18 @@ fn wire(
                                 ui.set_preview_texture(slint::Image::from_rgb8(texture));
                             }
                         });
+                    }
+                    RenderTarget::PreviewWindow(1) => {
+                        let ui_weak = ui_weak.clone();
+                        slint::invoke_from_event_loop(move || {
+                            if let Some(ui) = ui_weak.upgrade() {
+                                let texture = image_update.texture.unwrap();
+                                ui.set_preview_texture_1(slint::Image::from_rgb8(texture));
+                            }
+                        });
+                    }
+                    RenderTarget::PreviewWindow(index) => {
+                        eprintln!("no preview window configured for render target {index}");
                     }
                     RenderTarget::Timeline => {
                         let ui_weak = ui_weak.clone();

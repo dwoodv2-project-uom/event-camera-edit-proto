@@ -29,7 +29,8 @@ export component AppWindow inherits Window {
     in property <float> offset_s;
     in property <int> preview_width;
     in property <int> preview_height;
-    in property <image> preview_texture  <=>  preview_canvas.source;
+    in property <image> preview_texture <=> preview_canvas.source;
+    in property <image> preview_texture_1 <=> preview_canvas_1.source;
     in property <image> timeline_svg  <=>  timeline.timeline_svg;
     out property <length> timeline_width: timeline.width;
     out property <length> timeline_height: timeline.height;
@@ -106,12 +107,19 @@ export component AppWindow inherits Window {
             alignment: space-between;
 
             FlexboxLayout {
+                spacing: 8px;
+                flex-direction: row;
                 alignment: stretch;
 
                 // Preview window(s)
                 preview_window := Rectangle {
                     min-width: 200px;
                     preview_canvas := Image { }
+                }
+
+                preview_window_1 := Rectangle {
+                    min-width: 200px;
+                    preview_canvas_1 := Image { }
                 }
             }
 
