@@ -227,15 +227,12 @@ impl Renderer for VisualisationState {
                             .unwrap()
                             .unwrap()
                     } else {
-                        println!("reading from delta t");
                         decoder
                             .packets_by_ts_range(timestamp as i64 - delta_t as i64, timestamp as i64)
                             .await
                             .unwrap()
                             .unwrap()
                     };
-
-                    println!("found {} packets", packets.len());
 
                     let event_packets = packets.into_iter().filter_map(|packet| match packet {
                         Packet::EventPacket(content) => Some(content),
